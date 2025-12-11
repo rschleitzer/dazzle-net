@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Dazzle.Core</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <NoWarn>CS8632;CS0109;CS0414</NoWarn>
+    <LangVersion>preview</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../openjade-net/src/OpenSP/OpenSP.csproj" />
+    <ProjectReference Include="../../../openjade-net/src/OpenJade/OpenJade.csproj" />
+  </ItemGroup>
+
+</Project>
