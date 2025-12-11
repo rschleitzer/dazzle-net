@@ -103,9 +103,9 @@ public class DazzleApp : DssslApp
 
     public override FOTBuilder? makeFOTBuilder(out FOTBuilder.ExtensionTableEntry[]? ext)
     {
-        ext = SgmlFotBuilder.GetExtensions();
+        ext = Dazzle.TransformFOTBuilder.GetExtensions();
 
-        return new SgmlFotBuilder(
+        return new Dazzle.TransformFOTBuilder(
             this,
             outputType_ == OutputType.xmlType,
             outputOptions_);

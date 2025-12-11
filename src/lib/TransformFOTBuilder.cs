@@ -10,8 +10,8 @@ using System.Text;
 using Char = System.UInt32;
 using Boolean = System.Boolean;
 
-// SGML/XML FOT Builder - produces transformed SGML/XML output
-public class SgmlFotBuilder : FOTBuilder
+// Transform FOT Builder - produces transformed SGML/XML output
+public class TransformFOTBuilder : FOTBuilder
 {
     private CmdLineApp? app_;
     private OutputCharStream? os_;
@@ -22,6 +22,7 @@ public class SgmlFotBuilder : FOTBuilder
     private bool preserveSdata_;
     private System.Collections.Generic.List<bool> preserveSdataStack_;
     private System.Collections.Generic.Stack<OpenFile> openFileStack_ = new();
+    private System.Collections.Generic.Stack<string> directoryStack_ = new();
 
     // Tracks an open output file for entity flow objects
     private class OpenFile
@@ -55,7 +56,7 @@ public class SgmlFotBuilder : FOTBuilder
     }
 
     // Constructor
-    public SgmlFotBuilder(CmdLineApp app, bool xml, System.Collections.Generic.List<StringC> options)
+    public TransformFOTBuilder(CmdLineApp app, bool xml, System.Collections.Generic.List<StringC> options)
     {
         app_ = app;
         xml_ = xml;
@@ -288,8 +289,12 @@ public class SgmlFotBuilder : FOTBuilder
         ofp.systemId = new StringC(systemId);
         ofp.saveOs = os_;
 
-        // Convert StringC to filename string
+        // Convert StringC to filename string, prepending current directory if set
         string filename = systemId.ToString();
+        if (directoryStack_.Count > 0)
+        {
+            filename = System.IO.Path.Combine(directoryStack_.Peek(), filename);
+        }
         if (!string.IsNullOrEmpty(filename))
         {
             ofp.fileByteStream = new FileOutputByteStream();
@@ -330,6 +335,42 @@ public class SgmlFotBuilder : FOTBuilder
         }
     }
 
+    // Start a directory - creates directory and sets it as current path for entities
+    public void startDirectory(StringC path)
+    {
+        string dirPath = path.ToString();
+
+        // If we have a current directory, make the new path relative to it
+        if (directoryStack_.Count > 0)
+        {
+            dirPath = System.IO.Path.Combine(directoryStack_.Peek(), dirPath);
+        }
+
+        // Create the directory if it doesn't exist
+        if (!string.IsNullOrEmpty(dirPath))
+        {
+            try
+            {
+                System.IO.Directory.CreateDirectory(dirPath);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"ERROR: could not create directory '{dirPath}': {ex.Message}");
+            }
+        }
+
+        directoryStack_.Push(dirPath);
+    }
+
+    // End directory - pops the current directory from the stack
+    public void endDirectory()
+    {
+        if (directoryStack_.Count > 0)
+        {
+            directoryStack_.Pop();
+        }
+    }
+
     public override void formattingInstruction(StringC s)
     {
         flushPendingRe();
@@ -339,19 +380,19 @@ public class SgmlFotBuilder : FOTBuilder
     // Extension flow object handling
     public override void extension(ExtensionFlowObj fo, NodePtr currentNode)
     {
-        if (fo is SgmlExtensionFlowObj tfo)
+        if (fo is TransformExtensionFlowObj tfo)
             tfo.atomic(this, currentNode);
     }
 
     public override void startExtension(ExtensionFlowObj fo, NodePtr currentNode, System.Collections.Generic.List<FOTBuilder?> fotbs)
     {
-        if (fo is SgmlCompoundExtensionFlowObj tfo)
+        if (fo is TransformCompoundExtensionFlowObj tfo)
             tfo.start(this, currentNode);
     }
 
     public override void endExtension(ExtensionFlowObj fo)
     {
-        if (fo is SgmlCompoundExtensionFlowObj tfo)
+        if (fo is TransformCompoundExtensionFlowObj tfo)
             tfo.end(this);
     }
 
@@ -442,35 +483,40 @@ public class SgmlFotBuilder : FOTBuilder
             {
                 pubid = "UNREGISTERED::James Clark//Flow Object Class::formatting-instruction",
                 flowObj = new FormattingInstructionFlowObj()
+            },
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = "UNREGISTERED::Dazzle//Flow Object Class::directory",
+                flowObj = new DirectoryFlowObj()
             }
         };
     }
 }
 
 // Base class for atomic SGML extension flow objects
-public class SgmlExtensionFlowObj : FOTBuilder.ExtensionFlowObj
+public class TransformExtensionFlowObj : FOTBuilder.ExtensionFlowObj
 {
-    public virtual void atomic(SgmlFotBuilder fotb, NodePtr nd) { }
+    public virtual void atomic(TransformFOTBuilder fotb, NodePtr nd) { }
 }
 
 // Base class for compound SGML extension flow objects
-public class SgmlCompoundExtensionFlowObj : FOTBuilder.CompoundExtensionFlowObj
+public class TransformCompoundExtensionFlowObj : FOTBuilder.CompoundExtensionFlowObj
 {
-    public virtual void start(SgmlFotBuilder fotb, NodePtr nd) { }
-    public virtual void end(SgmlFotBuilder fotb) { }
+    public virtual void start(TransformFOTBuilder fotb, NodePtr nd) { }
+    public virtual void end(TransformFOTBuilder fotb) { }
 }
 
 // Entity flow object - creates a new output file
-public class EntityFlowObj : SgmlCompoundExtensionFlowObj
+public class EntityFlowObj : TransformCompoundExtensionFlowObj
 {
     private StringC systemId_ = new StringC();
 
-    public override void start(SgmlFotBuilder fotb, NodePtr nd)
+    public override void start(TransformFOTBuilder fotb, NodePtr nd)
     {
         fotb.startEntity(systemId_);
     }
 
-    public override void end(SgmlFotBuilder fotb)
+    public override void end(TransformFOTBuilder fotb)
     {
         fotb.endEntity();
     }
@@ -495,11 +541,11 @@ public class EntityFlowObj : SgmlCompoundExtensionFlowObj
 }
 
 // Entity reference flow object
-public class EntityRefFlowObj : SgmlExtensionFlowObj
+public class EntityRefFlowObj : TransformExtensionFlowObj
 {
     private StringC name_ = new StringC();
 
-    public override void atomic(SgmlFotBuilder fotb, NodePtr nd)
+    public override void atomic(TransformFOTBuilder fotb, NodePtr nd)
     {
         fotb.entityRef(name_);
     }
@@ -524,16 +570,16 @@ public class EntityRefFlowObj : SgmlExtensionFlowObj
 }
 
 // Element flow object
-public class ElementFlowObj : SgmlCompoundExtensionFlowObj
+public class ElementFlowObj : TransformCompoundExtensionFlowObj
 {
-    private SgmlFotBuilder.ElementNIC nic_ = new SgmlFotBuilder.ElementNIC();
+    private TransformFOTBuilder.ElementNIC nic_ = new TransformFOTBuilder.ElementNIC();
 
-    public override void start(SgmlFotBuilder fotb, NodePtr nd)
+    public override void start(TransformFOTBuilder fotb, NodePtr nd)
     {
         fotb.startElement(nic_);
     }
 
-    public override void end(SgmlFotBuilder fotb)
+    public override void end(TransformFOTBuilder fotb)
     {
         fotb.endElement();
     }
@@ -561,11 +607,11 @@ public class ElementFlowObj : SgmlCompoundExtensionFlowObj
 }
 
 // Empty element flow object
-public class EmptyElementFlowObj : SgmlExtensionFlowObj
+public class EmptyElementFlowObj : TransformExtensionFlowObj
 {
-    private SgmlFotBuilder.ElementNIC nic_ = new SgmlFotBuilder.ElementNIC();
+    private TransformFOTBuilder.ElementNIC nic_ = new TransformFOTBuilder.ElementNIC();
 
-    public override void atomic(SgmlFotBuilder fotb, NodePtr nd)
+    public override void atomic(TransformFOTBuilder fotb, NodePtr nd)
     {
         fotb.emptyElement(nic_);
     }
@@ -592,11 +638,11 @@ public class EmptyElementFlowObj : SgmlExtensionFlowObj
 }
 
 // Document type flow object
-public class DocumentTypeFlowObj : SgmlExtensionFlowObj
+public class DocumentTypeFlowObj : TransformExtensionFlowObj
 {
-    private SgmlFotBuilder.DocumentTypeNIC nic_ = new SgmlFotBuilder.DocumentTypeNIC();
+    private TransformFOTBuilder.DocumentTypeNIC nic_ = new TransformFOTBuilder.DocumentTypeNIC();
 
-    public override void atomic(SgmlFotBuilder fotb, NodePtr nd)
+    public override void atomic(TransformFOTBuilder fotb, NodePtr nd)
     {
         fotb.documentType(nic_);
     }
@@ -629,11 +675,11 @@ public class DocumentTypeFlowObj : SgmlExtensionFlowObj
 }
 
 // Processing instruction flow object
-public class ProcessingInstructionFlowObj : SgmlExtensionFlowObj
+public class ProcessingInstructionFlowObj : TransformExtensionFlowObj
 {
     private StringC data_ = new StringC();
 
-    public override void atomic(SgmlFotBuilder fotb, NodePtr nd)
+    public override void atomic(TransformFOTBuilder fotb, NodePtr nd)
     {
         fotb.processingInstruction(data_);
     }
@@ -658,11 +704,11 @@ public class ProcessingInstructionFlowObj : SgmlExtensionFlowObj
 }
 
 // Formatting instruction flow object
-public class FormattingInstructionFlowObj : SgmlExtensionFlowObj
+public class FormattingInstructionFlowObj : TransformExtensionFlowObj
 {
     private StringC data_ = new StringC();
 
-    public override void atomic(SgmlFotBuilder fotb, NodePtr nd)
+    public override void atomic(TransformFOTBuilder fotb, NodePtr nd)
     {
         fotb.formattingInstruction(data_);
     }
@@ -682,6 +728,40 @@ public class FormattingInstructionFlowObj : SgmlExtensionFlowObj
     {
         var c = new FormattingInstructionFlowObj();
         c.data_ = new StringC(data_);
+        return c;
+    }
+}
+
+// Directory flow object - creates a directory and makes entities relative to it
+public class DirectoryFlowObj : TransformCompoundExtensionFlowObj
+{
+    private StringC path_ = new StringC();
+
+    public override void start(TransformFOTBuilder fotb, NodePtr nd)
+    {
+        fotb.startDirectory(path_);
+    }
+
+    public override void end(TransformFOTBuilder fotb)
+    {
+        fotb.endDirectory();
+    }
+
+    public override bool hasNIC(StringC name)
+    {
+        return name.ToString() == "path";
+    }
+
+    public override void setNIC(StringC name, IExtensionFlowObjValue value)
+    {
+        if (name.ToString() == "path")
+            value.convertString(out path_);
+    }
+
+    public override FOTBuilder.ExtensionFlowObj copy()
+    {
+        var c = new DirectoryFlowObj();
+        c.path_ = new StringC(path_);
         return c;
     }
 }
