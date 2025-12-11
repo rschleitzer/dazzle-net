@@ -10,8 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../../openjade-net/src/OpenSP/OpenSP.csproj" />
-    <ProjectReference Include="../../../openjade-net/src/OpenJade/OpenJade.csproj" />
+    <PackageReference Include="OpenSP" Version="*" />
+    <PackageReference Include="OpenJade" Version="*" />
   </ItemGroup>
 
 </Project>
