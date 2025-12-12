@@ -10,6 +10,18 @@
     <LangVersion>preview</LangVersion>
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- .NET Tool Package -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dazzle</ToolCommandName>
+    <PackageId>Dazzle.Cli</PackageId>
+    <Version>0.1.2</Version>
+    <Authors>Ralf Schleitzer</Authors>
+    <Description>A tool for processing DSSSL stylesheets using the OpenJade style engine</Description>
+    <PackageTags>sgml;dsssl;openjade;cli</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/rschleitzer/dazzle-net</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,6 +31,7 @@
   <ItemGroup>
     <Content Include="sgml\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <PackageCopyToOutput>true</PackageCopyToOutput>
     </Content>
   </ItemGroup>
 
