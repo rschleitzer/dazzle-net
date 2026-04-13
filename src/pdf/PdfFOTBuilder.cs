@@ -57,6 +57,14 @@ public class PdfFOTBuilder : FOTBuilder
     {
         pageSequence_ = new PdfPageSequence(current_, nHF);
 
+        // Adopt any containers started before this page sequence (e.g. scroll wrapping body)
+        if (containerStack_.Count > 0)
+        {
+            var stack = containerStack_.ToArray(); // top-first order
+            var root = stack[stack.Length - 1];    // bottom = outermost container
+            pageSequence_.Add(root);
+        }
+
         // All header/footer content goes to this builder (serial mode)
         for (int i = 0; i < nHF; i++)
             headerFooter[i] = this;

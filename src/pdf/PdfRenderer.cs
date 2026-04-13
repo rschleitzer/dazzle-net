@@ -117,19 +117,27 @@ public class PdfRenderer
         }
     }
 
+    private static bool HasDisplayBreak(PdfNode node) =>
+        node is PdfParagraph or PdfDisplayGroup;
+
     private void RenderChildren(ColumnDescriptor col, List<PdfNode> children)
     {
+        bool pendingBreak = false;
         foreach (var child in children)
         {
-            // Page break before block-level content
-            if (child is PdfContainerNode && child.Characteristics.BreakBefore == Symbol.symbolPage)
+            bool breakBefore = HasDisplayBreak(child)
+                && child.Characteristics.BreakBefore == Symbol.symbolPage;
+
+            // Collapse break-after + break-before into a single page break
+            if (pendingBreak || breakBefore)
                 col.Item().PageBreak();
+            pendingBreak = false;
 
             col.Item().Element(container => RenderNode(container, child));
 
-            // Page break after block-level content
-            if (child is PdfContainerNode && child.Characteristics.BreakAfter == Symbol.symbolPage)
-                col.Item().PageBreak();
+            if (HasDisplayBreak(child)
+                && child.Characteristics.BreakAfter == Symbol.symbolPage)
+                pendingBreak = true;
         }
     }
 
@@ -311,7 +319,11 @@ public class PdfRenderer
             style = style.Italic();
 
         if (chars.LineSpacing > 0 && chars.FontSizePt > 0)
-            style = style.LineHeight(chars.LineSpacingPt / chars.FontSizePt);
+        {
+            float lineHeight = chars.LineSpacingPt / chars.FontSizePt;
+            if (lineHeight >= 1.0f)
+                style = style.LineHeight(lineHeight);
+        }
 
         return style;
     }
