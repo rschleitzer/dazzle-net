@@ -195,21 +195,39 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void characters(Char[] data, nuint size)
     {
+        bool verbatim = current_.Lines == Symbol.symbolAsis
+            || current_.InputWhitespaceTreatment == Symbol.symbolPreserve;
+
         var sb = new System.Text.StringBuilder((int)size);
         for (nuint i = 0; i < size; i++)
         {
             char c = (char)data[i];
-            if (c == '\r')
-                continue; // skip CR (record-ends)
-            if (c == '\n')
+            if (verbatim)
             {
-                // Collapse LF + subsequent whitespace into a single space
-                sb.Append(' ');
-                while (i + 1 < size && (data[i + 1] == ' ' || data[i + 1] == '\t'))
-                    i++;
+                // Preserve whitespace: keep CR/LF as newlines
+                if (c == '\r')
+                {
+                    if (i + 1 < size && data[i + 1] == '\n')
+                        i++; // skip CR in CR+LF
+                    sb.Append('\n');
+                }
+                else
+                    sb.Append(c);
             }
             else
-                sb.Append(c);
+            {
+                // Normal mode: collapse record-ends + whitespace into single space
+                if (c == '\r')
+                    continue;
+                if (c == '\n')
+                {
+                    sb.Append(' ');
+                    while (i + 1 < size && (data[i + 1] == ' ' || data[i + 1] == '\t'))
+                        i++;
+                }
+                else
+                    sb.Append(c);
+            }
         }
         var text = sb.ToString();
         if (text.Length > 0)
@@ -368,6 +386,10 @@ public class PdfFOTBuilder : FOTBuilder
     public override void setRightMargin(long margin) => current_.RightMargin = margin;
     public override void setTopMargin(long margin) => current_.TopMargin = margin;
     public override void setBottomMargin(long margin) => current_.BottomMargin = margin;
+
+    // Verbatim/whitespace
+    public override void setLines(Symbol lines) => current_.Lines = lines;
+    public override void setInputWhitespaceTreatment(Symbol treatment) => current_.InputWhitespaceTreatment = treatment;
 
     // Page number format
     public override void setPageNumberFormat(StringC format) => current_.PageNumberFormat = format.ToString();

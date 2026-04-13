@@ -47,6 +47,10 @@ public class PdfCharacteristics
     public long TopMargin { get; set; } = 72000;
     public long BottomMargin { get; set; } = 72000;
 
+    // Verbatim mode: symbolAsis preserves whitespace/linebreaks (programlisting)
+    public Symbol Lines { get; set; } = Symbol.symbolWrap;
+    public Symbol InputWhitespaceTreatment { get; set; } = Symbol.symbolCollapse;
+
     // Page number format: "1" = arabic, "i" = lowercase roman, "I" = uppercase roman
     public string PageNumberFormat { get; set; } = "1";
 
