@@ -603,18 +603,23 @@ public class PdfRenderer
     {
         try
         {
+            // Resolve file URI to local path
+            string path = graphic.SystemId;
+            if (path.StartsWith("file://"))
+                path = new Uri(path).LocalPath;
+
             var styled = container;
             if (graphic.HasMaxWidth)
                 styled = styled.MaxWidth(PdfCharacteristics.ToPoints(graphic.MaxWidth), Unit.Point);
             if (graphic.HasMaxHeight)
                 styled = styled.MaxHeight(PdfCharacteristics.ToPoints(graphic.MaxHeight), Unit.Point);
-            styled.Image(graphic.SystemId);
+            styled.Image(path);
         }
-        catch
+        catch (Exception ex)
         {
             container.Text(text =>
             {
-                text.Span($"[Image: {graphic.SystemId}]");
+                text.Span($"[Image: {graphic.SystemId} — {ex.Message}]");
             });
         }
     }
