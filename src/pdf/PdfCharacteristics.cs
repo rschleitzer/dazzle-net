@@ -47,6 +47,9 @@ public class PdfCharacteristics
     public long TopMargin { get; set; } = 72000;
     public long BottomMargin { get; set; } = 72000;
 
+    // Page number format: "1" = arabic, "i" = lowercase roman, "I" = uppercase roman
+    public string PageNumberFormat { get; set; } = "1";
+
     public PdfCharacteristics Clone()
     {
         return (PdfCharacteristics)MemberwiseClone();

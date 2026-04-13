@@ -31,9 +31,12 @@ public class PdfRenderer
         }).GeneratePdf(stream);
     }
 
+    private int pageSequenceIndex_;
+
     private void RenderPageSequence(IDocumentContainer container, PdfPageSequence pageSequence)
     {
         var chars = pageSequence.Characteristics;
+        var sectionName = $"__ps_{pageSequenceIndex_++}";
 
         container.Page(page =>
         {
@@ -41,24 +44,31 @@ public class PdfRenderer
             page.MarginLeft(chars.LeftMarginPt, Unit.Point);
             page.MarginRight(chars.RightMarginPt, Unit.Point);
             page.MarginTop(chars.TopMarginPt, Unit.Point);
-            page.MarginBottom(chars.BottomMarginPt, Unit.Point);
+            page.MarginBottom(0);
 
             // Header: "other front" slots (left/center/right)
             RenderHeaderFooter(page.Header(), pageSequence,
                 (int)(HF.otherHF | HF.frontHF | HF.headerHF));
 
-            // Footer: "other front" slots (left/center/right)
-            RenderHeaderFooter(page.Footer(), pageSequence,
+            // Footer: full margin height, positioned like RTF (footerMargin=0.5in from page edge)
+            const float footerMarginPt = 36f; // 0.5 inch from page bottom (RTF default)
+            RenderHeaderFooter(
+                page.Footer()
+                    .Height(chars.BottomMarginPt, Unit.Point)
+                    .AlignBottom()
+                    .PaddingBottom(footerMarginPt, Unit.Point),
+                pageSequence,
                 (int)(HF.otherHF | HF.frontHF | HF.footerHF));
 
-            page.Content().Column(col =>
+            page.Content().Section(sectionName).Column(col =>
             {
                 RenderChildren(col, pageSequence.Children);
             });
         });
     }
 
-    private void RenderHeaderFooter(IContainer hfContainer, PdfPageSequence pageSequence, int baseFlags)
+    private static void RenderHeaderFooter(IContainer hfContainer, PdfPageSequence pageSequence,
+        int baseFlags)
     {
         var left = pageSequence.HeaderFooter[baseFlags | (int)HF.leftHF];
         var center = pageSequence.HeaderFooter[baseFlags | (int)HF.centerHF];
@@ -67,47 +77,98 @@ public class PdfRenderer
         bool hasContent = left.Count > 0 || center.Count > 0 || right.Count > 0;
         if (!hasContent) return;
 
+        var format = pageSequence.Characteristics.PageNumberFormat;
+
         hfContainer.Row(row =>
         {
             // Left-aligned
             row.RelativeItem().Text(text =>
             {
-                RenderHFSlotInline(text, left);
+                RenderHFSlotInline(text, left, format);
             });
 
             // Center-aligned
             row.RelativeItem().Text(text =>
             {
                 text.AlignCenter();
-                RenderHFSlotInline(text, center);
+                RenderHFSlotInline(text, center, format);
             });
 
             // Right-aligned
             row.RelativeItem().Text(text =>
             {
                 text.AlignRight();
-                RenderHFSlotInline(text, right);
+                RenderHFSlotInline(text, right, format);
             });
         });
     }
 
-    private static void RenderHFSlotInline(TextDescriptor text, List<PdfNode> nodes)
+    private static void RenderHFSlotInline(TextDescriptor text, List<PdfNode> nodes, string format)
     {
         foreach (var node in nodes)
         {
             switch (node)
             {
                 case PdfParagraph para:
-                    RenderInlineContent(text, para.Children);
+                    RenderHFInlineContent(text, para.Children, format);
                     break;
                 case PdfContainerNode container:
-                    RenderInlineContent(text, container.Children);
+                    RenderHFInlineContent(text, container.Children, format);
                     break;
                 default:
-                    RenderInlineContent(text, new List<PdfNode> { node });
+                    RenderHFInlineContent(text, new List<PdfNode> { node }, format);
                     break;
             }
         }
+    }
+
+    private static void RenderHFInlineContent(TextDescriptor text, List<PdfNode> children,
+        string format)
+    {
+        foreach (var child in children)
+        {
+            switch (child)
+            {
+                case PdfTextRun run:
+                    text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
+                    break;
+                case PdfPageNumber pn:
+                    text.CurrentPageNumber()
+                        .Format(n => FormatPageNumber(n, format))
+                        .Style(BuildTextStyle(pn.Characteristics));
+                    break;
+                case PdfSequence seq:
+                    RenderHFInlineContent(text, seq.Children, format);
+                    break;
+            }
+        }
+    }
+
+    private static string FormatPageNumber(int? pageNumber, string format)
+    {
+        if (pageNumber == null) return "0";
+        int n = pageNumber.Value;
+        return format switch
+        {
+            "i" => ToRomanLower(n),
+            "I" => ToRomanLower(n).ToUpperInvariant(),
+            _ => n.ToString()
+        };
+    }
+
+    private static string ToRomanLower(int number)
+    {
+        if (number <= 0) return number.ToString();
+        ReadOnlySpan<(int value, string numeral)> table =
+        [
+            (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
+            (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
+            (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")
+        ];
+        var sb = new System.Text.StringBuilder();
+        foreach (var (value, numeral) in table)
+            while (number >= value) { sb.Append(numeral); number -= value; }
+        return sb.ToString();
     }
 
     private static void RenderInlineContent(TextDescriptor text, List<PdfNode> children)

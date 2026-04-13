@@ -354,6 +354,9 @@ public class PdfFOTBuilder : FOTBuilder
     public override void setTopMargin(long margin) => current_.TopMargin = margin;
     public override void setBottomMargin(long margin) => current_.BottomMargin = margin;
 
+    // Page number format
+    public override void setPageNumberFormat(StringC format) => current_.PageNumberFormat = format.ToString();
+
     // ==================== Helpers ====================
 
     private void ApplyDisplayNIC(FOTBuilder.DisplayNIC nic)
