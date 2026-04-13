@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\lib\Dazzle.Lib.csproj" />
+    <ProjectReference Include="..\pdf\Dazzle.Pdf.csproj" />
   </ItemGroup>
 
   <ItemGroup>

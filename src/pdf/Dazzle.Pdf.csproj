@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Dazzle.Pdf</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <NoWarn>CS8632;CS0109;CS0414</NoWarn>
+    <LangVersion>preview</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenSP" Version="*" />
+    <PackageReference Include="OpenJade" Version="*" />
+    <PackageReference Include="QuestPDF" Version="2025.*" />
+  </ItemGroup>
+
+</Project>

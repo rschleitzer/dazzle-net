@@ -13,12 +13,14 @@ public class DazzleApp : DssslApp
     public enum OutputType
     {
         sgmlType,
-        xmlType
+        xmlType,
+        pdfType
     }
 
     private static readonly string[] outputTypeNames = {
         "sgml",
-        "xml"
+        "xml",
+        "pdf"
     };
 
     private OutputType outputType_ = OutputType.sgmlType;
@@ -103,6 +105,13 @@ public class DazzleApp : DssslApp
 
     public override FOTBuilder? makeFOTBuilder(out FOTBuilder.ExtensionTableEntry[]? ext)
     {
+        if (outputType_ == OutputType.pdfType)
+        {
+            ext = Dazzle.Pdf.PdfFOTBuilder.GetExtensions();
+            var pdfOutput = outputFilename_.Length > 0 ? outputFilename_ : "output.pdf";
+            return new Dazzle.Pdf.PdfFOTBuilder(this, pdfOutput);
+        }
+
         ext = Dazzle.TransformFOTBuilder.GetExtensions();
 
         return new Dazzle.TransformFOTBuilder(
@@ -120,7 +129,7 @@ public class DazzleApp : DssslApp
     {
         Console.WriteLine("Usage: dazzle [options] DSSSL-spec document");
         Console.WriteLine("Options:");
-        Console.WriteLine("  -t type    Output type (sgml, xml)");
+        Console.WriteLine("  -t type    Output type (sgml, xml, pdf)");
         Console.WriteLine("  -o file    Output file");
         Console.WriteLine("  -d spec    DSSSL specification");
         Console.WriteLine("  -V var     Define variable");
