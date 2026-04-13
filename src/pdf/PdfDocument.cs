@@ -97,6 +97,36 @@ public class PdfRule : PdfNode
     }
 }
 
+// Leader: inline dot fill between title and page number
+public class PdfLeader : PdfContainerNode
+{
+    public PdfLeader(PdfCharacteristics characteristics) : base(characteristics) { }
+}
+
+// Cross-reference page number (resolved by QuestPDF via named locations)
+public class PdfNodePageNumber : PdfNode
+{
+    public string LocationName { get; }
+
+    public PdfNodePageNumber(PdfCharacteristics characteristics, string locationName)
+        : base(characteristics)
+    {
+        LocationName = locationName;
+    }
+}
+
+// Location mark: registers a named location for cross-page references
+public class PdfLocationMark : PdfNode
+{
+    public string LocationName { get; }
+
+    public PdfLocationMark(string locationName)
+        : base(new PdfCharacteristics())
+    {
+        LocationName = locationName;
+    }
+}
+
 // Leaf: external image
 public class PdfExternalGraphic : PdfNode
 {

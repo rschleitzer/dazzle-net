@@ -98,20 +98,43 @@ public class PdfRenderer
             switch (node)
             {
                 case PdfParagraph para:
-                    // Render paragraph children inline (no block formatting in HF)
-                    foreach (var child in para.Children)
-                    {
-                        if (child is PdfTextRun run)
-                            text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
-                        else if (child is PdfPageNumber)
-                            text.CurrentPageNumber();
-                    }
+                    RenderInlineContent(text, para.Children);
                     break;
                 case PdfTextRun run:
                     text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
                     break;
                 case PdfPageNumber:
                     text.CurrentPageNumber();
+                    break;
+            }
+        }
+    }
+
+    private static void RenderInlineContent(TextDescriptor text, List<PdfNode> children)
+    {
+        foreach (var child in children)
+        {
+            switch (child)
+            {
+                case PdfTextRun run:
+                    text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
+                    break;
+                case PdfPageNumber pn:
+                    text.CurrentPageNumber().Style(BuildTextStyle(pn.Characteristics));
+                    break;
+                case PdfSequence seq:
+                    RenderInlineContent(text, seq.Children);
+                    break;
+                case PdfLeader leader:
+                    // Emit leader character (typically ".") repeated as fill
+                    string dot = ".";
+                    if (leader.Children.Count > 0 && leader.Children[0] is PdfTextRun lr)
+                        dot = lr.Text;
+                    text.Span(" " + new string(dot[0], 40) + " ")
+                        .Style(BuildTextStyle(leader.Characteristics));
+                    break;
+                case PdfNodePageNumber npn:
+                    text.BeginPageNumberOfSection(npn.LocationName);
                     break;
             }
         }
@@ -169,41 +192,153 @@ public class PdfRenderer
             case PdfExternalGraphic graphic:
                 RenderExternalGraphic(container, graphic);
                 break;
+            case PdfLocationMark loc:
+                container.Section(loc.LocationName);
+                break;
         }
     }
 
     private static void RenderParagraph(IContainer container, PdfParagraph para)
     {
         var chars = para.Characteristics;
-        var styled = ApplyBlockCharacteristics(container, chars);
 
-        styled.Text(text =>
+        // DSSSL start-indent is absolute from the reference area edge.
+        // first-line-start-indent is relative to start-indent.
+        // Negative first-line-start-indent = hanging indent (first line outdented).
+        // QuestPDF only supports non-negative ParagraphFirstLineIndentation,
+        // so for hanging indents we reduce PaddingLeft to the first-line position.
+        var styled = ApplyBlockCharacteristics(container, chars, applyIndent: false);
+        if (chars.FirstLineStartIndent < 0)
         {
-            text.DefaultTextStyle(BuildTextStyle(chars));
+            float firstLinePt = Math.Max(0, chars.StartIndentPt + chars.FirstLineStartIndentPt);
+            styled = styled.PaddingLeft(firstLinePt, Unit.Point);
+        }
+        else
+        {
+            if (chars.StartIndent > 0)
+                styled = styled.PaddingLeft(chars.StartIndentPt, Unit.Point);
+        }
+        if (chars.EndIndent > 0)
+            styled = styled.PaddingRight(chars.EndIndentPt, Unit.Point);
 
-            if (chars.FirstLineStartIndent > 0)
-                text.ParagraphFirstLineIndentation(chars.FirstLineStartIndentPt, Unit.Point);
+        // Check for leader (TOC-style layout: title ... page-number)
+        var segments = FlattenInline(para.Children);
+        int leaderIdx = segments.FindIndex(s => s.Kind == SegmentKind.Leader);
 
-            if (chars.Quadding == Symbol.symbolCenter)
-                text.AlignCenter();
-            else if (chars.Quadding == Symbol.symbolEnd)
-                text.AlignRight();
-            else if (chars.Quadding == Symbol.symbolJustify)
-                text.Justify();
+        if (leaderIdx >= 0)
+        {
+            var before = segments.GetRange(0, leaderIdx);
+            var leaderSeg = segments[leaderIdx];
+            var after = segments.GetRange(leaderIdx + 1, segments.Count - leaderIdx - 1);
 
-            foreach (var child in para.Children)
+            styled.Row(row =>
             {
-                switch (child)
+                // Entry title (auto-width, left-aligned)
+                row.AutoItem().AlignBottom().Text(text =>
                 {
-                    case PdfTextRun run:
-                        text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
-                        break;
-                    case PdfPageNumber:
-                        text.CurrentPageNumber();
-                        break;
-                }
+                    text.DefaultTextStyle(BuildTextStyle(chars));
+                    RenderSegments(text, before);
+                });
+
+                // Dot leader (fills remaining space)
+                char dot = leaderSeg.Text != null && leaderSeg.Text.Length > 0
+                    ? leaderSeg.Text[0] : '.';
+                row.RelativeItem()
+                    .AlignBottom()
+                    .PaddingHorizontal(2, Unit.Point)
+                    .Text(text =>
+                    {
+                        text.DefaultTextStyle(BuildTextStyle(leaderSeg.Chars));
+                        text.ClampLines(1, "");
+                        text.Span(new string(dot, 200));
+                    });
+
+                // Page number (auto-width, right-aligned)
+                row.AutoItem().AlignBottom().Text(text =>
+                {
+                    text.DefaultTextStyle(BuildTextStyle(chars));
+                    RenderSegments(text, after);
+                });
+            });
+        }
+        else
+        {
+            styled.Text(text =>
+            {
+                text.DefaultTextStyle(BuildTextStyle(chars));
+
+                if (chars.FirstLineStartIndent > 0)
+                    text.ParagraphFirstLineIndentation(chars.FirstLineStartIndentPt, Unit.Point);
+
+                if (chars.Quadding == Symbol.symbolCenter)
+                    text.AlignCenter();
+                else if (chars.Quadding == Symbol.symbolEnd)
+                    text.AlignRight();
+                else if (chars.Quadding == Symbol.symbolJustify)
+                    text.Justify();
+
+                RenderSegments(text, segments);
+            });
+        }
+    }
+
+    private enum SegmentKind { Text, PageNumber, NodePageNumber, Leader }
+    private record InlineSegment(SegmentKind Kind, string? Text, string? LocationName,
+        PdfCharacteristics Chars);
+
+    private static List<InlineSegment> FlattenInline(List<PdfNode> children)
+    {
+        var result = new List<InlineSegment>();
+        FlattenInlineRecursive(children, result);
+        return result;
+    }
+
+    private static void FlattenInlineRecursive(List<PdfNode> children, List<InlineSegment> result)
+    {
+        foreach (var child in children)
+        {
+            switch (child)
+            {
+                case PdfTextRun run:
+                    result.Add(new(SegmentKind.Text, run.Text, null, run.Characteristics));
+                    break;
+                case PdfPageNumber pn:
+                    result.Add(new(SegmentKind.PageNumber, null, null, pn.Characteristics));
+                    break;
+                case PdfNodePageNumber npn:
+                    result.Add(new(SegmentKind.NodePageNumber, null, npn.LocationName,
+                        npn.Characteristics));
+                    break;
+                case PdfLeader leader:
+                    string dot = ".";
+                    if (leader.Children.Count > 0 && leader.Children[0] is PdfTextRun lr)
+                        dot = lr.Text;
+                    result.Add(new(SegmentKind.Leader, dot, null, leader.Characteristics));
+                    break;
+                case PdfSequence seq:
+                    FlattenInlineRecursive(seq.Children, result);
+                    break;
             }
-        });
+        }
+    }
+
+    private static void RenderSegments(TextDescriptor text, List<InlineSegment> segments)
+    {
+        foreach (var seg in segments)
+        {
+            switch (seg.Kind)
+            {
+                case SegmentKind.Text:
+                    text.Span(seg.Text!).Style(BuildTextStyle(seg.Chars));
+                    break;
+                case SegmentKind.PageNumber:
+                    text.CurrentPageNumber();
+                    break;
+                case SegmentKind.NodePageNumber:
+                    text.BeginPageNumberOfSection(seg.LocationName!);
+                    break;
+            }
+        }
     }
 
     private void RenderContainerNode(IContainer container, PdfContainerNode group)
@@ -285,8 +420,12 @@ public class PdfRenderer
         }
     }
 
-    // Apply block-level characteristics (spacing, indentation)
-    private static IContainer ApplyBlockCharacteristics(IContainer container, PdfCharacteristics chars)
+    // Apply block-level characteristics (spacing, background).
+    // Indentation is only applied for paragraphs (applyIndent=true) since
+    // DSSSL start-indent is absolute from the reference area edge, not relative
+    // to the parent container.
+    private static IContainer ApplyBlockCharacteristics(IContainer container, PdfCharacteristics chars,
+        bool applyIndent = false)
     {
         IContainer result = container;
 
@@ -294,10 +433,14 @@ public class PdfRenderer
             result = result.PaddingTop(chars.SpaceBeforePt, Unit.Point);
         if (chars.SpaceAfter > 0)
             result = result.PaddingBottom(chars.SpaceAfterPt, Unit.Point);
-        if (chars.StartIndent > 0)
-            result = result.PaddingLeft(chars.StartIndentPt, Unit.Point);
-        if (chars.EndIndent > 0)
-            result = result.PaddingRight(chars.EndIndentPt, Unit.Point);
+
+        if (applyIndent)
+        {
+            if (chars.StartIndent > 0)
+                result = result.PaddingLeft(chars.StartIndentPt, Unit.Point);
+            if (chars.EndIndent > 0)
+                result = result.PaddingRight(chars.EndIndentPt, Unit.Point);
+        }
 
         if (chars.HasBackgroundColor)
             result = result.Background(Color.FromRGB(chars.BackgroundR, chars.BackgroundG, chars.BackgroundB));

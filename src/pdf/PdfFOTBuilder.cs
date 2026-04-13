@@ -55,6 +55,7 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void startSimplePageSequence(FOTBuilder?[] headerFooter)
     {
+        characteristicsStack_.Push(current_.Clone());
         pageSequence_ = new PdfPageSequence(current_, nHF);
 
         // Adopt any containers started before this page sequence (e.g. scroll wrapping body)
@@ -79,8 +80,7 @@ public class PdfFOTBuilder : FOTBuilder
     public override void endSimplePageSequenceHeaderFooter(uint flags)
     {
         hfSlot_ = null;
-        if (characteristicsStack_.Count > 0)
-            current_ = characteristicsStack_.Pop();
+        end();
     }
 
     public override void endAllSimplePageSequenceHeaderFooter()
@@ -96,6 +96,7 @@ public class PdfFOTBuilder : FOTBuilder
             pageSequence_ = null;
         }
         containerStack_.Clear();
+        end();
     }
 
     public void Finish()
@@ -108,12 +109,11 @@ public class PdfFOTBuilder : FOTBuilder
 
     // ==================== Block-level flow objects ====================
 
-    // start()/end() are called by the engine around every flow object.
-    // set* calls happen between start() and the specific startXxx() call.
-    // We push characteristics on start() so set* modifications are scoped.
-    // The DSSSL engine calls set* before startXxx, then children, then endXxx.
-    // start()/end() are used for header/footer processing, not for wrapping every FO.
-    // Each compound FO manages its own characteristics push/pop.
+    // The engine calls pushStyle (which invokes set* on the FOTBuilder),
+    // then processInner (which calls startXxx, children, endXxx), then popStyle.
+    // The base class startXxx/endXxx default to calling start()/end().
+    // end() uses RTF-style "remove-top, copy-from-new-top" semantics so that
+    // set* modifications are scoped to the current FO and don't leak into siblings.
 
     public override void start()
     {
@@ -123,7 +123,14 @@ public class PdfFOTBuilder : FOTBuilder
     public override void end()
     {
         if (characteristicsStack_.Count > 0)
-            current_ = characteristicsStack_.Pop();
+        {
+            // RTF semantics: remove top, then restore a copy from the new top.
+            // This ensures set* modifications are scoped to the current FO
+            // and don't leak into subsequent siblings.
+            characteristicsStack_.Pop();
+            if (characteristicsStack_.Count > 0)
+                current_ = characteristicsStack_.Peek().Clone();
+        }
     }
 
     public override void startParagraph(ParagraphNIC nic)
@@ -138,7 +145,7 @@ public class PdfFOTBuilder : FOTBuilder
     public override void endParagraph()
     {
         if (containerStack_.Count > 0) containerStack_.Pop();
-        if (characteristicsStack_.Count > 0) current_ = characteristicsStack_.Pop();
+        end();
     }
 
     public override void startDisplayGroup(DisplayGroupNIC nic)
@@ -153,7 +160,7 @@ public class PdfFOTBuilder : FOTBuilder
     public override void endDisplayGroup()
     {
         if (containerStack_.Count > 0) containerStack_.Pop();
-        if (characteristicsStack_.Count > 0) current_ = characteristicsStack_.Pop();
+        end();
     }
 
     public override void startScroll()
@@ -167,7 +174,7 @@ public class PdfFOTBuilder : FOTBuilder
     public override void endScroll()
     {
         if (containerStack_.Count > 0) containerStack_.Pop();
-        if (characteristicsStack_.Count > 0) current_ = characteristicsStack_.Pop();
+        end();
     }
 
     public override void startSequence()
@@ -181,7 +188,7 @@ public class PdfFOTBuilder : FOTBuilder
     public override void endSequence()
     {
         if (containerStack_.Count > 0) containerStack_.Pop();
-        if (characteristicsStack_.Count > 0) current_ = characteristicsStack_.Pop();
+        end();
     }
 
     // ==================== Inline content ====================
@@ -199,23 +206,80 @@ public class PdfFOTBuilder : FOTBuilder
         AddNode(new PdfPageNumber(current_));
     }
 
+    public override void startLeader(LeaderNIC nic)
+    {
+        var leader = new PdfLeader(current_);
+        AddNode(leader);
+        characteristicsStack_.Push(current_.Clone());
+        containerStack_.Push(leader);
+    }
+
+    public override void endLeader()
+    {
+        if (containerStack_.Count > 0) containerStack_.Pop();
+        end();
+    }
+
+    // ==================== Node tracking & cross-references ====================
+
+    public override void startNode(NodePtr node, StringC processingMode)
+    {
+        if (processingMode.size() == 0 && node != null)
+        {
+            var name = GetLocationName(node);
+            if (name != null)
+                AddNode(new PdfLocationMark(name));
+        }
+    }
+
+    public override void currentNodePageNumber(NodePtr node)
+    {
+        start();
+        var name = GetLocationName(node);
+        if (name != null)
+            AddNode(new PdfNodePageNumber(current_, name));
+        end();
+    }
+
+    private static string? GetLocationName(NodePtr node)
+    {
+        GroveString id = new GroveString();
+        if (node.getId(ref id) == OpenJade.Grove.AccessResult.accessOK && id.size() > 0)
+        {
+            var sb = new System.Text.StringBuilder("n");
+            sb.Append(node.groveIndex());
+            sb.Append('_');
+            for (nuint i = 0; i < id.size(); i++)
+                sb.Append((char)id[i]);
+            return sb.ToString();
+        }
+        ulong idx = 0;
+        if (node.elementIndex(ref idx) == OpenJade.Grove.AccessResult.accessOK)
+            return $"n{node.groveIndex()}_{idx}";
+        return null;
+    }
+
     // ==================== Atomic flow objects ====================
 
     public override void rule(RuleNIC nic)
     {
+        start();
         ApplyDisplayNIC(nic);
         AddNode(new PdfRule(current_, nic.orientation,
             nic.hasLength, nic.hasLength ? nic.length.length : 0));
+        end();
     }
 
     public override void externalGraphic(ExternalGraphicNIC nic)
     {
+        start();
         ApplyDisplayNIC(nic);
         AddNode(new PdfExternalGraphic(current_,
             nic.entitySystemId.ToString(),
             nic.isDisplay,
             nic.hasMaxWidth, nic.hasMaxWidth ? nic.maxWidth.length : 0,
             nic.hasMaxHeight, nic.hasMaxHeight ? nic.maxHeight.length : 0));
+        end();
     }
 
     // ==================== Extension flow objects (Phase 2) ====================
