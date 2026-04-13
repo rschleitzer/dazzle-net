@@ -460,6 +460,11 @@ public class PdfRenderer
                 });
             });
         }
+        else if (segments.Any(s => s.Kind == SegmentKind.ExternalGraphic))
+        {
+            // Paragraph with embedded graphics: render as column of text + images
+            RenderParagraphWithGraphics(styled, chars, segments);
+        }
         else
         {
             styled.Text(text =>
@@ -481,9 +486,9 @@ public class PdfRenderer
         }
     }
 
-    private enum SegmentKind { Text, PageNumber, NodePageNumber, Leader }
+    private enum SegmentKind { Text, PageNumber, NodePageNumber, Leader, ExternalGraphic }
     private record InlineSegment(SegmentKind Kind, string? Text, string? LocationName,
-        PdfCharacteristics Chars);
+        PdfCharacteristics Chars, PdfExternalGraphic? Graphic = null);
 
     private static List<InlineSegment> FlattenInline(List<PdfNode> children)
     {
@@ -514,8 +519,12 @@ public class PdfRenderer
                         dot = lr.Text;
                     result.Add(new(SegmentKind.Leader, dot, null, leader.Characteristics));
                     break;
-                case PdfSequence seq:
-                    FlattenInlineRecursive(seq.Children, result);
+                case PdfContainerNode cont:
+                    FlattenInlineRecursive(cont.Children, result);
+                    break;
+                case PdfExternalGraphic graphic:
+                    result.Add(new(SegmentKind.ExternalGraphic, null, null,
+                        graphic.Characteristics, graphic));
                     break;
             }
         }
@@ -536,8 +545,62 @@ public class PdfRenderer
                 case SegmentKind.NodePageNumber:
                     text.BeginPageNumberOfSection(seg.LocationName!);
                     break;
+                // ExternalGraphic is handled by RenderParagraphWithGraphics, not inline
             }
         }
+    }
+
+    private static string ResolveImagePath(string systemId)
+    {
+        string path = systemId;
+        if (path.StartsWith("file://"))
+            path = new Uri(path).LocalPath;
+        if (!Path.IsPathRooted(path))
+            path = Path.GetFullPath(path);
+        return path;
+    }
+
+    // Render a paragraph that contains external graphics as a Column of text+images
+    private static void RenderParagraphWithGraphics(IContainer container,
+        PdfCharacteristics chars, List<InlineSegment> segments)
+    {
+        container.Column(col =>
+        {
+            var textSegs = new List<InlineSegment>();
+            foreach (var seg in segments)
+            {
+                if (seg.Kind == SegmentKind.ExternalGraphic && seg.Graphic != null)
+                {
+                    // Flush accumulated text segments
+                    if (textSegs.Count > 0)
+                    {
+                        var captured = new List<InlineSegment>(textSegs);
+                        col.Item().Text(text =>
+                        {
+                            text.DefaultTextStyle(BuildTextStyle(chars));
+                            RenderSegments(text, captured);
+                        });
+                        textSegs.Clear();
+                    }
+                    // Render graphic as block element
+                    var graphic = seg.Graphic;
+                    col.Item().Element(c => RenderExternalGraphic(c, graphic));
+                }
+                else
+                {
+                    textSegs.Add(seg);
+                }
+            }
+            // Flush remaining text
+            if (textSegs.Count > 0)
+            {
+                col.Item().Text(text =>
+                {
+                    text.DefaultTextStyle(BuildTextStyle(chars));
+                    RenderSegments(text, textSegs);
+                });
+            }
+        });
     }
 
     private void RenderContainerNode(IContainer container, PdfContainerNode group)
@@ -601,27 +664,19 @@ public class PdfRenderer
 
     private static void RenderExternalGraphic(IContainer container, PdfExternalGraphic graphic)
     {
-        try
+        string path = ResolveImagePath(graphic.SystemId);
+        if (!File.Exists(path))
         {
-            // Resolve file URI to local path
-            string path = graphic.SystemId;
-            if (path.StartsWith("file://"))
-                path = new Uri(path).LocalPath;
+            container.Text(text => text.Span($"[Image: {graphic.SystemId}]"));
+            return;
+        }
 
-            var styled = container;
-            if (graphic.HasMaxWidth)
-                styled = styled.MaxWidth(PdfCharacteristics.ToPoints(graphic.MaxWidth), Unit.Point);
-            if (graphic.HasMaxHeight)
-                styled = styled.MaxHeight(PdfCharacteristics.ToPoints(graphic.MaxHeight), Unit.Point);
-            styled.Image(path);
-        }
-        catch (Exception ex)
-        {
-            container.Text(text =>
-            {
-                text.Span($"[Image: {graphic.SystemId} — {ex.Message}]");
-            });
-        }
+        var styled = container;
+        if (graphic.HasMaxWidth)
+            styled = styled.MaxWidth(PdfCharacteristics.ToPoints(graphic.MaxWidth), Unit.Point);
+        if (graphic.HasMaxHeight)
+            styled = styled.MaxHeight(PdfCharacteristics.ToPoints(graphic.MaxHeight), Unit.Point);
+        styled.Image(path).FitWidth();
     }
 
     // Apply block-level characteristics (spacing, background).
