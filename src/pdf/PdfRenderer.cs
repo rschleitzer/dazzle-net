@@ -100,11 +100,11 @@ public class PdfRenderer
                 case PdfParagraph para:
                     RenderInlineContent(text, para.Children);
                     break;
-                case PdfTextRun run:
-                    text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
+                case PdfContainerNode container:
+                    RenderInlineContent(text, container.Children);
                     break;
-                case PdfPageNumber:
-                    text.CurrentPageNumber();
+                default:
+                    RenderInlineContent(text, new List<PdfNode> { node });
                     break;
             }
         }
