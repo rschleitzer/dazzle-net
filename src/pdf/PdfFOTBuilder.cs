@@ -216,14 +216,21 @@ public class PdfFOTBuilder : FOTBuilder
             }
             else
             {
-                // Normal mode: collapse record-ends + whitespace into single space
+                // Normal mode: collapse record-ends and runs of whitespace
                 if (c == '\r')
                     continue;
-                if (c == '\n')
+                if (c == '\n' || c == ' ' || c == '\t')
                 {
+                    // Collapse any run of whitespace (spaces, tabs, newlines) into one space
                     sb.Append(' ');
-                    while (i + 1 < size && (data[i + 1] == ' ' || data[i + 1] == '\t'))
-                        i++;
+                    while (i + 1 < size)
+                    {
+                        char next = (char)data[i + 1];
+                        if (next == ' ' || next == '\t' || next == '\n' || next == '\r')
+                            i++;
+                        else
+                            break;
+                    }
                 }
                 else
                     sb.Append(c);
