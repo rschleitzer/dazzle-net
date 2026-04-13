@@ -6,52 +6,45 @@ using Symbol = OpenJade.Style.FOTBuilder.Symbol;
 
 public class PdfRenderer
 {
-    public void Render(PdfPageSequence pageSequence, string outputPath)
+    public void Render(List<PdfPageSequence> pageSequences, string outputPath)
     {
         QuestPDF.Settings.License = LicenseType.Community;
 
-        var chars = pageSequence.Characteristics;
-
         Document.Create(container =>
         {
-            container.Page(page =>
-            {
-                page.Size(chars.PageWidthPt, chars.PageHeightPt, Unit.Point);
-                page.MarginLeft(chars.LeftMarginPt, Unit.Point);
-                page.MarginRight(chars.RightMarginPt, Unit.Point);
-                page.MarginTop(chars.TopMarginPt, Unit.Point);
-                page.MarginBottom(chars.BottomMarginPt, Unit.Point);
-
-                page.Content().Column(col =>
-                {
-                    RenderChildren(col, pageSequence.Children);
-                });
-            });
+            foreach (var pageSequence in pageSequences)
+                RenderPageSequence(container, pageSequence);
         }).GeneratePdf(outputPath);
     }
 
-    public void Render(PdfPageSequence pageSequence, Stream stream)
+    public void Render(List<PdfPageSequence> pageSequences, Stream stream)
     {
         QuestPDF.Settings.License = LicenseType.Community;
 
-        var chars = pageSequence.Characteristics;
-
         Document.Create(container =>
         {
-            container.Page(page =>
-            {
-                page.Size(chars.PageWidthPt, chars.PageHeightPt, Unit.Point);
-                page.MarginLeft(chars.LeftMarginPt, Unit.Point);
-                page.MarginRight(chars.RightMarginPt, Unit.Point);
-                page.MarginTop(chars.TopMarginPt, Unit.Point);
-                page.MarginBottom(chars.BottomMarginPt, Unit.Point);
-
-                page.Content().Column(col =>
-                {
-                    RenderChildren(col, pageSequence.Children);
-                });
-            });
+            foreach (var pageSequence in pageSequences)
+                RenderPageSequence(container, pageSequence);
         }).GeneratePdf(stream);
+    }
+
+    private void RenderPageSequence(IDocumentContainer container, PdfPageSequence pageSequence)
+    {
+        var chars = pageSequence.Characteristics;
+
+        container.Page(page =>
+        {
+            page.Size(chars.PageWidthPt, chars.PageHeightPt, Unit.Point);
+            page.MarginLeft(chars.LeftMarginPt, Unit.Point);
+            page.MarginRight(chars.RightMarginPt, Unit.Point);
+            page.MarginTop(chars.TopMarginPt, Unit.Point);
+            page.MarginBottom(chars.BottomMarginPt, Unit.Point);
+
+            page.Content().Column(col =>
+            {
+                RenderChildren(col, pageSequence.Children);
+            });
+        });
     }
 
     private void RenderChildren(ColumnDescriptor col, List<PdfNode> children)
@@ -137,12 +130,10 @@ public class PdfRenderer
 
     private void RenderSequence(IContainer container, PdfSequence seq)
     {
-        container.Row(row =>
+        // Sequence is a pass-through container — render children in a column
+        container.Column(col =>
         {
-            foreach (var child in seq.Children)
-            {
-                row.AutoItem().Element(c => RenderNode(c, child));
-            }
+            RenderChildren(col, seq.Children);
         });
     }
 

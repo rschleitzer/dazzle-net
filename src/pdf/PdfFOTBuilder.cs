@@ -19,7 +19,8 @@ public class PdfFOTBuilder : FOTBuilder
     private Stack<PdfCharacteristics> characteristicsStack_ = new();
 
     // Document tree being built
-    private PdfPageSequence pageSequence_;
+    private System.Collections.Generic.List<PdfPageSequence> pageSequences_ = new();
+    private PdfPageSequence? pageSequence_;
     private Stack<PdfContainerNode> containerStack_ = new();
 
 
@@ -30,10 +31,9 @@ public class PdfFOTBuilder : FOTBuilder
     }
 
     // Current container we're adding content to (null if outside page sequence)
-    private PdfContainerNode CurrentContainer =>
+    private PdfContainerNode? CurrentContainer =>
         containerStack_.Count > 0 ? containerStack_.Peek()
-        : pageSequence_ != null ? pageSequence_
-        : null;
+        : pageSequence_;
 
     // ==================== Page sequence ====================
 
@@ -48,8 +48,20 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void endSimplePageSequence()
     {
+        if (pageSequence_ != null)
+        {
+            pageSequences_.Add(pageSequence_);
+            pageSequence_ = null;
+        }
+        containerStack_.Clear();
+    }
+
+    public void Finish()
+    {
+        if (pageSequences_.Count == 0)
+            return;
         var renderer = new PdfRenderer();
-        renderer.Render(pageSequence_, outputFilename_);
+        renderer.Render(pageSequences_, outputFilename_);
     }
 
     // ==================== Block-level flow objects ====================

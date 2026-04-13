@@ -26,6 +26,7 @@ public class DazzleApp : DssslApp
     private OutputType outputType_ = OutputType.sgmlType;
     private string outputFilename_ = "";
     private System.Collections.Generic.List<StringC> outputOptions_;
+    private Dazzle.Pdf.PdfFOTBuilder? pdfBuilder_;
 
     public DazzleApp() : base(72000)
     {
@@ -109,7 +110,8 @@ public class DazzleApp : DssslApp
         {
             ext = Dazzle.Pdf.PdfFOTBuilder.GetExtensions();
             var pdfOutput = outputFilename_.Length > 0 ? outputFilename_ : "output.pdf";
-            return new Dazzle.Pdf.PdfFOTBuilder(this, pdfOutput);
+            pdfBuilder_ = new Dazzle.Pdf.PdfFOTBuilder(this, pdfOutput);
+            return pdfBuilder_;
         }
 
         ext = Dazzle.TransformFOTBuilder.GetExtensions();
@@ -118,6 +120,12 @@ public class DazzleApp : DssslApp
             this,
             outputType_ == OutputType.xmlType,
             outputOptions_);
+    }
+
+    public override void processGrove()
+    {
+        base.processGrove();
+        pdfBuilder_?.Finish();
     }
 
     public string programName()
