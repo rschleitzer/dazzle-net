@@ -217,7 +217,8 @@ public class PdfRenderer
     private static bool HasDisplayBreak(PdfNode node) =>
         node is PdfParagraph or PdfDisplayGroup;
 
-    private void RenderChildren(ColumnDescriptor col, List<PdfNode> children)
+    private void RenderChildren(ColumnDescriptor col, List<PdfNode> children,
+        float accumSpace = 0, float prevBottomHalfLeading = 0)
     {
         bool pendingBreak = false;
         foreach (var child in children)
@@ -227,15 +228,111 @@ public class PdfRenderer
 
             // Collapse break-after + break-before into a single page break
             if (pendingBreak || breakBefore)
+            {
                 col.Item().PageBreak();
+                accumSpace = 0;
+            }
             pendingBreak = false;
 
-            col.Item().Element(container => RenderNode(container, child));
+            // DSSSL space model: collapse adjacent SpaceAfter/SpaceBefore (take max).
+            // Container nodes (display-group, scroll, sequence) don't add visible
+            // spacing themselves — their SpaceBefore/After propagates through to
+            // children, like RTF's accumSpace_ carries across nesting boundaries.
+            // Skip invisible nodes (location marks) — they don't affect spacing
+            if (child is PdfLocationMark)
+            {
+                col.Item().Element(container => RenderNode(container, child));
+                continue;
+            }
+
+            bool isContainer = child is PdfDisplayGroup or PdfScroll or PdfSequence;
+            float spaceBefore = child.Characteristics.SpaceBeforePt;
+            float collapsedSpace = Math.Max(accumSpace, spaceBefore);
+
+            // QuestPDF's LineHeight distributes half-leading above and below each
+            // line. This creates visual space at paragraph boundaries that stacks
+            // with our explicit spacing. Compensate by subtracting the half-leading
+            // from the previous element's bottom and current element's top.
+            float topHalfLeading = HalfLeading(child.Characteristics);
+            // Compensate for ~half of QuestPDF's edge leading (empirically tuned)
+            float leadingCompensation = (prevBottomHalfLeading + topHalfLeading) * 0.5f;
+            float adjustedSpace = Math.Max(0, collapsedSpace - leadingCompensation);
+
+
+            if (isContainer)
+            {
+                var cnode = (PdfContainerNode)child;
+                // Capture values for lambda (avoid C# closure over modified variable)
+                float capturedCollapsed = collapsedSpace;
+                float capturedPrevBHL = prevBottomHalfLeading;
+                col.Item().Element(cont =>
+                {
+                    var styled = ApplyBlockCharacteristics(cont, cnode.Characteristics);
+                    styled.Column(innerCol =>
+                    {
+                        RenderChildren(innerCol, cnode.Children,
+                            capturedCollapsed, capturedPrevBHL);
+                    });
+                });
+                prevBottomHalfLeading = LastLeafHalfLeading(cnode);
+            }
+            else
+            {
+                float nodeTopHL = topHalfLeading;
+                float leafCompensation = (prevBottomHalfLeading + nodeTopHL) * 0.5f;
+                float adjustedSpaceFinal = Math.Max(0, collapsedSpace - leafCompensation);
+                if (adjustedSpaceFinal > 0)
+                    col.Item().PaddingTop(adjustedSpaceFinal, Unit.Point)
+                        .Element(container => RenderNode(container, child));
+                else
+                    col.Item().Element(container => RenderNode(container, child));
+                prevBottomHalfLeading = HalfLeading(child.Characteristics);
+            }
+
+            accumSpace = child.Characteristics.SpaceAfterPt;
 
             if (HasDisplayBreak(child)
                 && child.Characteristics.BreakAfter == Symbol.symbolPage)
                 pendingBreak = true;
         }
+    }
+
+    // QuestPDF LineHeight distributes extra space (leading) as half above and half
+    // below each line. This half-leading must be subtracted from inter-element
+    // spacing to match RTF/Word behavior where line-spacing is internal to paragraphs.
+    private static float HalfLeading(PdfCharacteristics chars)
+    {
+        if (chars.LineSpacing > 0 && chars.FontSize > 0)
+            return Math.Max(0, (chars.LineSpacingPt - chars.FontSizePt) / 2);
+        return 0;
+    }
+
+    private static float FirstLeafHalfLeading(PdfContainerNode container)
+    {
+        foreach (var child in container.Children)
+        {
+            // Paragraphs are block-level leaves for spacing purposes.
+            // Only recurse into pass-through containers (display-group, scroll, sequence).
+            if (child is PdfParagraph para)
+                return HalfLeading(para.Characteristics);
+            if (child is PdfContainerNode nested)
+                return FirstLeafHalfLeading(nested);
+            return HalfLeading(child.Characteristics);
+        }
+        return 0;
+    }
+
+    private static float LastLeafHalfLeading(PdfContainerNode container)
+    {
+        for (int i = container.Children.Count - 1; i >= 0; i--)
+        {
+            if (container.Children[i] is PdfParagraph para)
+                return HalfLeading(para.Characteristics);
+            if (container.Children[i] is PdfContainerNode nested)
+                return LastLeafHalfLeading(nested);
+            return HalfLeading(container.Children[i].Characteristics);
+        }
+        return 0;
     }
 
     private void RenderNode(IContainer container, PdfNode node)
@@ -503,10 +600,8 @@ public class PdfRenderer
     {
         IContainer result = container;
 
-        if (chars.SpaceBefore > 0)
-            result = result.PaddingTop(chars.SpaceBeforePt, Unit.Point);
-        if (chars.SpaceAfter > 0)
-            result = result.PaddingBottom(chars.SpaceAfterPt, Unit.Point);
+        // SpaceBefore/SpaceAfter are handled by RenderChildren with DSSSL collapsing
+        // (max of adjacent spaces, not sum). Not applied here.
 
         if (applyIndent)
         {
