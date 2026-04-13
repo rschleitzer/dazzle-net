@@ -46,19 +46,32 @@ public class PdfRenderer
             page.MarginTop(chars.TopMarginPt, Unit.Point);
             page.MarginBottom(0);
 
-            // Header: "other front" slots (left/center/right)
-            RenderHeaderFooter(page.Header(), pageSequence,
-                (int)(HF.otherHF | HF.frontHF | HF.headerHF));
+            // Header: first-page with ShowOnce, other-pages with SkipOnce
+            page.Header().Column(col =>
+            {
+                col.Item().ShowOnce().Element(c =>
+                    RenderHeaderFooter(c, pageSequence,
+                        (int)(HF.firstHF | HF.frontHF | HF.headerHF)));
+                col.Item().SkipOnce().Element(c =>
+                    RenderHeaderFooter(c, pageSequence,
+                        (int)(HF.otherHF | HF.frontHF | HF.headerHF)));
+            });
 
             // Footer: full margin height, positioned like RTF (footerMargin=0.5in from page edge)
-            const float footerMarginPt = 36f; // 0.5 inch from page bottom (RTF default)
-            RenderHeaderFooter(
-                page.Footer()
-                    .Height(chars.BottomMarginPt, Unit.Point)
-                    .AlignBottom()
-                    .PaddingBottom(footerMarginPt, Unit.Point),
-                pageSequence,
-                (int)(HF.otherHF | HF.frontHF | HF.footerHF));
+            const float footerMarginPt = 36f;
+            page.Footer()
+                .Height(chars.BottomMarginPt, Unit.Point)
+                .AlignBottom()
+                .PaddingBottom(footerMarginPt, Unit.Point)
+                .Column(col =>
+                {
+                    col.Item().ShowOnce().Element(c =>
+                        RenderHeaderFooter(c, pageSequence,
+                            (int)(HF.firstHF | HF.frontHF | HF.footerHF)));
+                    col.Item().SkipOnce().Element(c =>
+                        RenderHeaderFooter(c, pageSequence,
+                            (int)(HF.otherHF | HF.frontHF | HF.footerHF)));
+                });
 
             page.Content().Section(sectionName).Column(col =>
             {
