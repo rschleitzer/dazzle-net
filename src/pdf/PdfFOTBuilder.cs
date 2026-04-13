@@ -197,8 +197,23 @@ public class PdfFOTBuilder : FOTBuilder
     {
         var sb = new System.Text.StringBuilder((int)size);
         for (nuint i = 0; i < size; i++)
-            sb.Append((char)data[i]);
-        AddNode(new PdfTextRun(sb.ToString(), current_));
+        {
+            char c = (char)data[i];
+            if (c == '\r')
+                continue; // skip CR (record-ends)
+            if (c == '\n')
+            {
+                // Collapse LF + subsequent whitespace into a single space
+                sb.Append(' ');
+                while (i + 1 < size && (data[i + 1] == ' ' || data[i + 1] == '\t'))
+                    i++;
+            }
+            else
+                sb.Append(c);
+        }
+        var text = sb.ToString();
+        if (text.Length > 0)
+            AddNode(new PdfTextRun(text, current_));
     }
 
     public override void pageNumber()

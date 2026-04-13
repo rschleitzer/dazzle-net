@@ -379,22 +379,50 @@ public class PdfRenderer
         // QuestPDF only supports non-negative ParagraphFirstLineIndentation,
         // so for hanging indents we reduce PaddingLeft to the first-line position.
         var styled = ApplyBlockCharacteristics(container, chars, applyIndent: false);
-        if (chars.FirstLineStartIndent < 0)
+        if (chars.EndIndent > 0)
+            styled = styled.PaddingRight(chars.EndIndentPt, Unit.Point);
+
+        var segments = FlattenInline(para.Children);
+        int leaderIdx = segments.FindIndex(s => s.Kind == SegmentKind.Leader);
+
+        if (leaderIdx >= 0)
         {
+            // TOC-style: leader check takes priority over hanging indent
             float firstLinePt = Math.Max(0, chars.StartIndentPt + chars.FirstLineStartIndentPt);
             styled = styled.PaddingLeft(firstLinePt, Unit.Point);
+        }
+        else if (chars.FirstLineStartIndent < 0)
+        {
+            // Hanging indent: label at firstLine position, body at start-indent.
+            // Render as Row: left column = label (hangWidth), right column = body text.
+            float firstLinePt = Math.Max(0, chars.StartIndentPt + chars.FirstLineStartIndentPt);
+            float hangWidth = Math.Abs(chars.FirstLineStartIndentPt);
+            styled = styled.PaddingLeft(firstLinePt, Unit.Point);
+
+            styled.Row(row =>
+            {
+                row.ConstantItem(hangWidth, Unit.Point).Text(text =>
+                {
+                    text.DefaultTextStyle(BuildTextStyle(chars));
+                    if (segments.Count > 0)
+                        RenderSegments(text, segments.GetRange(0, 1));
+                });
+                row.RelativeItem().Text(text =>
+                {
+                    text.DefaultTextStyle(BuildTextStyle(chars));
+                    if (segments.Count > 1)
+                        RenderSegments(text, segments.GetRange(1, segments.Count - 1));
+                });
+            });
+            return;
         }
         else
         {
             if (chars.StartIndent > 0)
                 styled = styled.PaddingLeft(chars.StartIndentPt, Unit.Point);
         }
-        if (chars.EndIndent > 0)
-            styled = styled.PaddingRight(chars.EndIndentPt, Unit.Point);
 
-        // Check for leader (TOC-style layout: title ... page-number)
-        var segments = FlattenInline(para.Children);
-        int leaderIdx = segments.FindIndex(s => s.Kind == SegmentKind.Leader);
+        // Leader-based or normal rendering
 
         if (leaderIdx >= 0)
         {
