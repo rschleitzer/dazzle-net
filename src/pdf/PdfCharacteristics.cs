@@ -47,6 +47,9 @@ public class PdfCharacteristics
     public long TopMargin { get; set; } = 72000;
     public long BottomMargin { get; set; } = 72000;
 
+    // Position point shift (positive = superscript, negative = subscript)
+    public long PositionPointShift { get; set; } = 0;
+
     // Verbatim mode: symbolAsis preserves whitespace/linebreaks (programlisting)
     public Symbol Lines { get; set; } = Symbol.symbolWrap;
     public Symbol InputWhitespaceTreatment { get; set; } = Symbol.symbolCollapse;

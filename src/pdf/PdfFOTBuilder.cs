@@ -246,6 +246,10 @@ public class PdfFOTBuilder : FOTBuilder
         AddNode(new PdfPageNumber(current_));
     }
 
+    // Position point shift (superscript/subscript via DSSSL characteristic)
+    public override void setPositionPointShift(LengthSpec shift) =>
+        current_.PositionPointShift = shift.length;
+
     public override void startLeader(LeaderNIC nic)
     {
         var leader = new PdfLeader(current_);

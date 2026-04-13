@@ -184,6 +184,15 @@ public class PdfRenderer
         return sb.ToString();
     }
 
+    private static void RenderShiftedSpan(TextDescriptor text, string content,
+        PdfCharacteristics chars)
+    {
+        // Position-point-shift: QuestPDF's text.Element()/Superscript()/Subscript()
+        // all disrupt inline flow or line height. Use font-size reduction only
+        // (set by DSSSL engine) as a visual approximation, like the RTF backend.
+        text.Span(content).Style(BuildTextStyle(chars));
+    }
+
     private static void RenderInlineContent(TextDescriptor text, List<PdfNode> children)
     {
         foreach (var child in children)
@@ -191,7 +200,7 @@ public class PdfRenderer
             switch (child)
             {
                 case PdfTextRun run:
-                    text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
+                    RenderShiftedSpan(text, run.Text, run.Characteristics);
                     break;
                 case PdfPageNumber pn:
                     text.CurrentPageNumber().Style(BuildTextStyle(pn.Characteristics));
@@ -542,7 +551,7 @@ public class PdfRenderer
             switch (seg.Kind)
             {
                 case SegmentKind.Text:
-                    text.Span(seg.Text!).Style(BuildTextStyle(seg.Chars));
+                    RenderShiftedSpan(text, seg.Text!, seg.Chars);
                     break;
                 case SegmentKind.PageNumber:
                     text.CurrentPageNumber();
