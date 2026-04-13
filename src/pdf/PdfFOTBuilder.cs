@@ -23,6 +23,9 @@ public class PdfFOTBuilder : FOTBuilder
     private PdfPageSequence? pageSequence_;
     private Stack<PdfContainerNode> containerStack_ = new();
 
+    // Header/footer slot tracking: when set, content goes to HF slot instead of main content
+    private uint? hfSlot_;
+
 
     public PdfFOTBuilder(CmdLineApp app, string outputFilename)
     {
@@ -35,15 +38,46 @@ public class PdfFOTBuilder : FOTBuilder
         containerStack_.Count > 0 ? containerStack_.Peek()
         : pageSequence_;
 
+    // Add a node: if inside a container (e.g. paragraph), add there.
+    // Otherwise, if in HF mode, add to the HF slot.
+    // Otherwise, add to the page sequence.
+    private void AddNode(PdfNode node)
+    {
+        if (containerStack_.Count > 0)
+            containerStack_.Peek().Add(node);
+        else if (hfSlot_.HasValue && pageSequence_ != null)
+            pageSequence_.HeaderFooter[hfSlot_.Value].Add(node);
+        else
+            pageSequence_?.Add(node);
+    }
+
     // ==================== Page sequence ====================
 
     public override void startSimplePageSequence(FOTBuilder?[] headerFooter)
     {
         pageSequence_ = new PdfPageSequence(current_, nHF);
 
-        // For Phase 1: all header/footer content goes to this builder
+        // All header/footer content goes to this builder (serial mode)
         for (int i = 0; i < nHF; i++)
             headerFooter[i] = this;
+    }
+
+    public override void startSimplePageSequenceHeaderFooter(uint flags)
+    {
+        hfSlot_ = flags;
+        characteristicsStack_.Push(current_.Clone());
+    }
+
+    public override void endSimplePageSequenceHeaderFooter(uint flags)
+    {
+        hfSlot_ = null;
+        if (characteristicsStack_.Count > 0)
+            current_ = characteristicsStack_.Pop();
+    }
+
+    public override void endAllSimplePageSequenceHeaderFooter()
+    {
+        // HF data is already stored in pageSequence_.HeaderFooter
     }
 
     public override void endSimplePageSequence()
@@ -88,7 +122,7 @@ public class PdfFOTBuilder : FOTBuilder
     {
         ApplyDisplayNIC(nic);
         var para = new PdfParagraph(current_);
-        CurrentContainer?.Add(para);
+        AddNode(para);
         characteristicsStack_.Push(current_.Clone());
         containerStack_.Push(para);
     }
@@ -103,7 +137,7 @@ public class PdfFOTBuilder : FOTBuilder
     {
         ApplyDisplayNIC(nic);
         var group = new PdfDisplayGroup(current_);
-        CurrentContainer?.Add(group);
+        AddNode(group);
         characteristicsStack_.Push(current_.Clone());
         containerStack_.Push(group);
     }
@@ -117,7 +151,7 @@ public class PdfFOTBuilder : FOTBuilder
     public override void startScroll()
     {
         var scroll = new PdfScroll(current_);
-        CurrentContainer?.Add(scroll);
+        AddNode(scroll);
         characteristicsStack_.Push(current_.Clone());
         containerStack_.Push(scroll);
     }
@@ -131,7 +165,7 @@ public class PdfFOTBuilder : FOTBuilder
     public override void startSequence()
     {
         var seq = new PdfSequence(current_);
-        CurrentContainer?.Add(seq);
+        AddNode(seq);
         characteristicsStack_.Push(current_.Clone());
         containerStack_.Push(seq);
     }
@@ -146,17 +180,15 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void characters(Char[] data, nuint size)
     {
-        if (CurrentContainer == null) return;
         var sb = new System.Text.StringBuilder((int)size);
         for (nuint i = 0; i < size; i++)
             sb.Append((char)data[i]);
-        var run = new PdfTextRun(sb.ToString(), current_);
-        CurrentContainer.Add(run);
+        AddNode(new PdfTextRun(sb.ToString(), current_));
     }
 
     public override void pageNumber()
     {
-        CurrentContainer.Add(new PdfPageNumber(current_));
+        AddNode(new PdfPageNumber(current_));
     }
 
     // ==================== Atomic flow objects ====================
@@ -164,14 +196,14 @@ public class PdfFOTBuilder : FOTBuilder
     public override void rule(RuleNIC nic)
     {
         ApplyDisplayNIC(nic);
-        CurrentContainer.Add(new PdfRule(current_, nic.orientation,
+        AddNode(new PdfRule(current_, nic.orientation,
             nic.hasLength, nic.hasLength ? nic.length.length : 0));
     }
 
     public override void externalGraphic(ExternalGraphicNIC nic)
     {
         ApplyDisplayNIC(nic);
-        CurrentContainer.Add(new PdfExternalGraphic(current_,
+        AddNode(new PdfExternalGraphic(current_,
             nic.entitySystemId.ToString(),
             nic.isDisplay,
             nic.hasMaxWidth, nic.hasMaxWidth ? nic.maxWidth.length : 0,

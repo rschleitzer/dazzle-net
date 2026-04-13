@@ -3,6 +3,7 @@ namespace Dazzle.Pdf;
 using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
 using Symbol = OpenJade.Style.FOTBuilder.Symbol;
+using HF = OpenJade.Style.FOTBuilder.HF;
 
 public class PdfRenderer
 {
@@ -10,9 +11,10 @@ public class PdfRenderer
     {
         QuestPDF.Settings.License = LicenseType.Community;
 
+        var nonEmpty = pageSequences.Where(ps => ps.Children.Count > 0).ToList();
         Document.Create(container =>
         {
-            foreach (var pageSequence in pageSequences)
+            foreach (var pageSequence in nonEmpty)
                 RenderPageSequence(container, pageSequence);
         }).GeneratePdf(outputPath);
     }
@@ -21,9 +23,10 @@ public class PdfRenderer
     {
         QuestPDF.Settings.License = LicenseType.Community;
 
+        var nonEmpty = pageSequences.Where(ps => ps.Children.Count > 0).ToList();
         Document.Create(container =>
         {
-            foreach (var pageSequence in pageSequences)
+            foreach (var pageSequence in nonEmpty)
                 RenderPageSequence(container, pageSequence);
         }).GeneratePdf(stream);
     }
@@ -40,6 +43,14 @@ public class PdfRenderer
             page.MarginTop(chars.TopMarginPt, Unit.Point);
             page.MarginBottom(chars.BottomMarginPt, Unit.Point);
 
+            // Header: "other front" slots (left/center/right)
+            RenderHeaderFooter(page.Header(), pageSequence,
+                (int)(HF.otherHF | HF.frontHF | HF.headerHF));
+
+            // Footer: "other front" slots (left/center/right)
+            RenderHeaderFooter(page.Footer(), pageSequence,
+                (int)(HF.otherHF | HF.frontHF | HF.footerHF));
+
             page.Content().Column(col =>
             {
                 RenderChildren(col, pageSequence.Children);
@@ -47,11 +58,78 @@ public class PdfRenderer
         });
     }
 
+    private void RenderHeaderFooter(IContainer hfContainer, PdfPageSequence pageSequence, int baseFlags)
+    {
+        var left = pageSequence.HeaderFooter[baseFlags | (int)HF.leftHF];
+        var center = pageSequence.HeaderFooter[baseFlags | (int)HF.centerHF];
+        var right = pageSequence.HeaderFooter[baseFlags | (int)HF.rightHF];
+
+        bool hasContent = left.Count > 0 || center.Count > 0 || right.Count > 0;
+        if (!hasContent) return;
+
+        hfContainer.Row(row =>
+        {
+            // Left-aligned
+            row.RelativeItem().Text(text =>
+            {
+                RenderHFSlotInline(text, left);
+            });
+
+            // Center-aligned
+            row.RelativeItem().Text(text =>
+            {
+                text.AlignCenter();
+                RenderHFSlotInline(text, center);
+            });
+
+            // Right-aligned
+            row.RelativeItem().Text(text =>
+            {
+                text.AlignRight();
+                RenderHFSlotInline(text, right);
+            });
+        });
+    }
+
+    private static void RenderHFSlotInline(TextDescriptor text, List<PdfNode> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            switch (node)
+            {
+                case PdfParagraph para:
+                    // Render paragraph children inline (no block formatting in HF)
+                    foreach (var child in para.Children)
+                    {
+                        if (child is PdfTextRun run)
+                            text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
+                        else if (child is PdfPageNumber)
+                            text.CurrentPageNumber();
+                    }
+                    break;
+                case PdfTextRun run:
+                    text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
+                    break;
+                case PdfPageNumber:
+                    text.CurrentPageNumber();
+                    break;
+            }
+        }
+    }
+
     private void RenderChildren(ColumnDescriptor col, List<PdfNode> children)
     {
         foreach (var child in children)
         {
+            // Page break before block-level content
+            if (child is PdfContainerNode && child.Characteristics.BreakBefore == Symbol.symbolPage)
+                col.Item().PageBreak();
+
             col.Item().Element(container => RenderNode(container, child));
+
+            // Page break after block-level content
+            if (child is PdfContainerNode && child.Characteristics.BreakAfter == Symbol.symbolPage)
+                col.Item().PageBreak();
         }
     }
 
@@ -94,6 +172,9 @@ public class PdfRenderer
         styled.Text(text =>
         {
             text.DefaultTextStyle(BuildTextStyle(chars));
+
+            if (chars.FirstLineStartIndent > 0)
+                text.ParagraphFirstLineIndentation(chars.FirstLineStartIndentPt, Unit.Point);
 
             if (chars.Quadding == Symbol.symbolCenter)
                 text.AlignCenter();
