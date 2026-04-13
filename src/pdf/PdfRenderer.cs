@@ -519,8 +519,13 @@ public class PdfRenderer
                         dot = lr.Text;
                     result.Add(new(SegmentKind.Leader, dot, null, leader.Characteristics));
                     break;
-                case PdfContainerNode cont:
-                    FlattenInlineRecursive(cont.Children, result);
+                case PdfSequence seq:
+                    FlattenInlineRecursive(seq.Children, result);
+                    break;
+                case PdfParagraph nestedPara:
+                    // Recurse into nested paragraphs (e.g. figure wrappers
+                    // containing Paragraph/Paragraph/Sequence with graphics)
+                    FlattenInlineRecursive(nestedPara.Children, result);
                     break;
                 case PdfExternalGraphic graphic:
                     result.Add(new(SegmentKind.ExternalGraphic, null, null,
