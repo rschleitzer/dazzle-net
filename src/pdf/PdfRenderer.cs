@@ -258,14 +258,11 @@ public class PdfRenderer
             float spaceBefore = child.Characteristics.SpaceBeforePt;
             float collapsedSpace = Math.Max(accumSpace, spaceBefore);
 
-            // QuestPDF's LineHeight distributes half-leading above and below each
-            // line. This creates visual space at paragraph boundaries that stacks
-            // with our explicit spacing. Compensate by subtracting the half-leading
-            // from the previous element's bottom and current element's top.
-            float topHalfLeading = HalfLeading(child.Characteristics);
-            // Compensate for ~half of QuestPDF's edge leading (empirically tuned)
-            float leadingCompensation = (prevBottomHalfLeading + topHalfLeading) ;
-            float adjustedSpace = Math.Max(0, collapsedSpace - leadingCompensation);
+            // QuestPDF's LineHeight and Word's \sl both add half-leading at paragraph
+            // edges. Since \sb/\sa in RTF is the space BETWEEN paragraph boxes (which
+            // already include line-height), no compensation is needed — PaddingTop
+            // directly corresponds to the collapsed DSSSL space.
+            float adjustedSpace = collapsedSpace;
 
 
             if (isContainer)
@@ -287,9 +284,7 @@ public class PdfRenderer
             }
             else
             {
-                float nodeTopHL = topHalfLeading;
-                float leafCompensation = (prevBottomHalfLeading + nodeTopHL) ;
-                float adjustedSpaceFinal = Math.Max(0, collapsedSpace - leafCompensation);
+                float adjustedSpaceFinal = collapsedSpace;
                 if (adjustedSpaceFinal > 0)
                     col.Item().PaddingTop(adjustedSpaceFinal, Unit.Point)
                         .Element(container => RenderNode(container, child));

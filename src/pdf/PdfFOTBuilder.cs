@@ -179,7 +179,13 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void startSequence()
     {
-        var seq = new PdfSequence(current_);
+        // Sequences are inline pass-through containers in DSSSL — they don't have
+        // their own display spacing. Clear inherited SpaceBefore/SpaceAfter so they
+        // don't inflate inter-element gaps at the rendering level.
+        var seqChars = current_.Clone();
+        seqChars.SpaceBefore = 0;
+        seqChars.SpaceAfter = 0;
+        var seq = new PdfSequence(seqChars);
         AddNode(seq);
         characteristicsStack_.Push(current_.Clone());
         containerStack_.Push(seq);
