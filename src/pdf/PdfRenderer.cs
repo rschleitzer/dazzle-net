@@ -264,7 +264,7 @@ public class PdfRenderer
             // from the previous element's bottom and current element's top.
             float topHalfLeading = HalfLeading(child.Characteristics);
             // Compensate for ~half of QuestPDF's edge leading (empirically tuned)
-            float leadingCompensation = (prevBottomHalfLeading + topHalfLeading) * 0.5f;
+            float leadingCompensation = (prevBottomHalfLeading + topHalfLeading) ;
             float adjustedSpace = Math.Max(0, collapsedSpace - leadingCompensation);
 
 
@@ -288,7 +288,7 @@ public class PdfRenderer
             else
             {
                 float nodeTopHL = topHalfLeading;
-                float leafCompensation = (prevBottomHalfLeading + nodeTopHL) * 0.5f;
+                float leafCompensation = (prevBottomHalfLeading + nodeTopHL) ;
                 float adjustedSpaceFinal = Math.Max(0, collapsedSpace - leafCompensation);
                 if (adjustedSpaceFinal > 0)
                     col.Item().PaddingTop(adjustedSpaceFinal, Unit.Point)
