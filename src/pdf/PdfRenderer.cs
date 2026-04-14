@@ -187,10 +187,37 @@ public class PdfRenderer
     private static void RenderShiftedSpan(TextDescriptor text, string content,
         PdfCharacteristics chars)
     {
-        // Position-point-shift: QuestPDF's text.Element()/Superscript()/Subscript()
-        // all disrupt inline flow or line height. Use font-size reduction only
-        // (set by DSSSL engine) as a visual approximation, like the RTF backend.
-        text.Span(content).Style(BuildTextStyle(chars));
+        if (chars.PositionPointShift != 0)
+        {
+            // The DSSSL engine already reduced the font size (e.g. 60% for super/sub).
+            // The reduced size (6.6pt) is smaller than surrounding text (11pt), so
+            // text.Element() won't increase line height. TranslateY shifts visually.
+            float shiftPt = PdfCharacteristics.ToPoints(chars.PositionPointShift);
+            // Superscript: shift up by ~40% of DSSSL value (rest comes from baseline alignment)
+            // Subscript: shift down by full DSSSL value + font descent compensation
+            float translateY;
+            if (shiftPt > 0)
+                translateY = -shiftPt * 0.4f; // up (less than full, baseline already helps)
+            else
+                translateY = -shiftPt + chars.FontSizePt * 0.3f; // down (full + extra)
+            if (shiftPt > 0)
+            {
+                // Superscript: element sits above baseline (fits within ascender)
+                text.Element(TextInjectedElementAlignment.AboveBaseline)
+                    .Text(t => t.Span(content).Style(BuildTextStyle(chars)));
+            }
+            else
+            {
+                // Subscript: BelowBaseline + TranslateY upward to reduce depth.
+                // Full BelowBaseline extends too far down; shift up by ~60% of
+                // font size to sit just slightly below baseline.
+                text.Element(TextInjectedElementAlignment.BelowBaseline)
+                    .TranslateY(-(chars.FontSizePt * 0.6f), Unit.Point)
+                    .Text(t => t.Span(content).Style(BuildTextStyle(chars)));
+            }
+        }
+        else
+            text.Span(content).Style(BuildTextStyle(chars));
     }
 
     private static void RenderInlineContent(TextDescriptor text, List<PdfNode> children)
