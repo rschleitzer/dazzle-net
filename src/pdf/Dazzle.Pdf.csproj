@@ -7,6 +7,16 @@
     <Nullable>disable</Nullable>
     <NoWarn>CS8632;CS0109;CS0414</NoWarn>
     <LangVersion>preview</LangVersion>
+
+    <!-- NuGet Package -->
+    <PackageId>Dazzle.Pdf</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Ralf Schleitzer</Authors>
+    <Description>DSSSL-to-PDF processor using OpenJade and QuestPDF. Includes table support and a clean DssslProcessor API.</Description>
+    <PackageTags>dsssl;openjade;pdf;questpdf</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/rschleitzer/dazzle-net</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +28,7 @@
   <ItemGroup>
     <Content Include="sgml\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <PackageCopyToOutput>true</PackageCopyToOutput>
     </Content>
   </ItemGroup>
 
