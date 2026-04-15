@@ -33,6 +33,12 @@ public class PdfFOTBuilder : FOTBuilder
         outputFilename_ = outputFilename;
     }
 
+    public PdfFOTBuilder(Messenger messenger, string outputFilename)
+    {
+        app_ = null!;
+        outputFilename_ = outputFilename;
+    }
+
     // Current container we're adding content to (null if outside page sequence)
     private PdfContainerNode? CurrentContainer =>
         containerStack_.Count > 0 ? containerStack_.Peek()
@@ -50,6 +56,9 @@ public class PdfFOTBuilder : FOTBuilder
         else
             pageSequence_?.Add(node);
     }
+
+    // True when the current container is a table row (sequences should not be pushed)
+    private bool InTableRow => containerStack_.Count > 0 && containerStack_.Peek() is PdfTableRow;
 
     // ==================== Page sequence ====================
 
@@ -105,6 +114,14 @@ public class PdfFOTBuilder : FOTBuilder
             return;
         var renderer = new PdfRenderer();
         renderer.Render(pageSequences_, outputFilename_);
+    }
+
+    public void Finish(Stream stream)
+    {
+        if (pageSequences_.Count == 0)
+            return;
+        var renderer = new PdfRenderer();
+        renderer.Render(pageSequences_, stream);
     }
 
     // ==================== Block-level flow objects ====================
@@ -179,6 +196,14 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void startSequence()
     {
+        if (InTableRow)
+        {
+            // Inside a table row, the DSSSL engine wraps each cell in an implicit
+            // sequence. Skip it — only table-cell nodes belong as row children.
+            characteristicsStack_.Push(current_.Clone());
+            return;
+        }
+
         // Sequences are inline pass-through containers in DSSSL — they don't have
         // their own display spacing. Clear inherited SpaceBefore/SpaceAfter so they
         // don't inflate inter-element gaps at the rendering level.
@@ -193,6 +218,12 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void endSequence()
     {
+        if (containerStack_.Count > 0 && containerStack_.Peek() is not PdfSequence)
+        {
+            // Matching the skipped startSequence inside a table row
+            end();
+            return;
+        }
         if (containerStack_.Count > 0) containerStack_.Pop();
         end();
     }
@@ -332,6 +363,126 @@ public class PdfFOTBuilder : FOTBuilder
         end();
     }
 
+    // ==================== Table flow objects ====================
+
+    private PdfTable? currentTable_;
+    private enum TablePartSection { Body, Header, Footer }
+    private TablePartSection tablePartSection_ = TablePartSection.Body;
+    private PdfTableRow? currentTableRow_;
+
+    public override void startTable(TableNIC nic)
+    {
+        ApplyDisplayNIC(nic);
+        var table = new PdfTable(current_);
+        AddNode(table);
+        characteristicsStack_.Push(current_.Clone());
+        currentTable_ = table;
+    }
+
+    public override void endTable()
+    {
+        currentTable_ = null;
+        end();
+    }
+
+    public override void tableColumn(TableColumnNIC nic)
+    {
+        currentTable_?.Columns.Add(new PdfTableColumn
+        {
+            ColumnIndex = nic.columnIndex,
+            NColumnsSpanned = nic.nColumnsSpanned,
+            HasWidth = nic.hasWidth,
+            Width = nic.hasWidth ? nic.width.length : 0,
+            TableUnitFactor = nic.width.tableUnitFactor
+        });
+    }
+
+    public override void startTablePartSerial(TablePartNIC nic)
+    {
+        characteristicsStack_.Push(current_.Clone());
+        tablePartSection_ = TablePartSection.Body;
+    }
+
+    public override void endTablePartSerial() { end(); }
+
+    public override void startTablePartHeader()
+    {
+        characteristicsStack_.Push(current_.Clone());
+        tablePartSection_ = TablePartSection.Header;
+    }
+
+    public override void endTablePartHeader()
+    {
+        tablePartSection_ = TablePartSection.Body;
+        end();
+    }
+
+    public override void startTablePartFooter()
+    {
+        characteristicsStack_.Push(current_.Clone());
+        tablePartSection_ = TablePartSection.Footer;
+    }
+
+    public override void endTablePartFooter()
+    {
+        tablePartSection_ = TablePartSection.Body;
+        end();
+    }
+
+    public override void startTableRow()
+    {
+        characteristicsStack_.Push(current_.Clone());
+        var row = new PdfTableRow(current_);
+        currentTableRow_ = row;
+        containerStack_.Push(row);
+
+        if (currentTable_ != null)
+        {
+            switch (tablePartSection_)
+            {
+                case TablePartSection.Header: currentTable_.HeaderRows.Add(row); break;
+                case TablePartSection.Footer: currentTable_.FooterRows.Add(row); break;
+                default: currentTable_.BodyRows.Add(row); break;
+            }
+        }
+    }
+
+    public override void endTableRow()
+    {
+        if (containerStack_.Count > 0) containerStack_.Pop();
+        currentTableRow_ = null;
+        end();
+    }
+
+    public override void startTableCell(TableCellNIC nic)
+    {
+        characteristicsStack_.Push(current_.Clone());
+        if (nic.missing)
+            return; // Skip auto-generated missing cells
+
+        var cell = new PdfTableCell(current_, nic.columnIndex,
+            nic.nColumnsSpanned, nic.nRowsSpanned);
+        currentTableRow_?.Add(cell);
+        containerStack_.Push(cell);
+    }
+
+    public override void endTableCell()
+    {
+        if (containerStack_.Count > 0 && containerStack_.Peek() is PdfTableCell)
+            containerStack_.Pop();
+        end();
+    }
+
+    // Table border callbacks: tracked but not deeply modeled in Phase 1
+    public override void tableBeforeRowBorder() { }
+    public override void tableAfterRowBorder() { }
+    public override void tableBeforeColumnBorder() { }
+    public override void tableAfterColumnBorder() { }
+    public override void tableCellBeforeRowBorder() { }
+    public override void tableCellAfterRowBorder() { }
+    public override void tableCellBeforeColumnBorder() { }
+    public override void tableCellAfterColumnBorder() { }
+
     // ==================== Extension flow objects (Phase 2) ====================
 
     public override void extension(ExtensionFlowObj fo, NodePtr currentNode)
@@ -407,6 +558,18 @@ public class PdfFOTBuilder : FOTBuilder
     // Verbatim/whitespace
     public override void setLines(Symbol lines) => current_.Lines = lines;
     public override void setInputWhitespaceTreatment(Symbol treatment) => current_.InputWhitespaceTreatment = treatment;
+
+    // Cell margins and alignment
+    public override void setCellBeforeRowMargin(LengthSpec margin) => current_.CellBeforeRowMargin = margin.length;
+    public override void setCellAfterRowMargin(LengthSpec margin) => current_.CellAfterRowMargin = margin.length;
+    public override void setCellBeforeColumnMargin(LengthSpec margin) => current_.CellBeforeColumnMargin = margin.length;
+    public override void setCellAfterColumnMargin(LengthSpec margin) => current_.CellAfterColumnMargin = margin.length;
+    public override void setCellBeforeRowMargin(long margin) => current_.CellBeforeRowMargin = margin;
+    public override void setCellAfterRowMargin(long margin) => current_.CellAfterRowMargin = margin;
+    public override void setCellBeforeColumnMargin(long margin) => current_.CellBeforeColumnMargin = margin;
+    public override void setCellAfterColumnMargin(long margin) => current_.CellAfterColumnMargin = margin;
+    public override void setCellBackground(bool background) => current_.CellBackground = background;
+    public override void setCellRowAlignment(Symbol alignment) => current_.CellRowAlignment = alignment;
 
     // Page number format
     public override void setPageNumberFormat(StringC format) => current_.PageNumberFormat = format.ToString();

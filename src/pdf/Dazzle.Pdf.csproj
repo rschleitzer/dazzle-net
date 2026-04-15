@@ -15,4 +15,10 @@
     <PackageReference Include="QuestPDF" Version="2025.*" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="sgml\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

@@ -54,6 +54,14 @@ public class PdfCharacteristics
     public Symbol Lines { get; set; } = Symbol.symbolWrap;
     public Symbol InputWhitespaceTreatment { get; set; } = Symbol.symbolCollapse;
 
+    // Cell margins (table cells)
+    public long CellBeforeRowMargin { get; set; } = 0;
+    public long CellAfterRowMargin { get; set; } = 0;
+    public long CellBeforeColumnMargin { get; set; } = 0;
+    public long CellAfterColumnMargin { get; set; } = 0;
+    public bool CellBackground { get; set; } = false;
+    public Symbol CellRowAlignment { get; set; } = Symbol.symbolStart;
+
     // Page number format: "1" = arabic, "i" = lowercase roman, "I" = uppercase roman
     public string PageNumberFormat { get; set; } = "1";
 
@@ -81,6 +89,10 @@ public class PdfCharacteristics
     public float RightMarginPt => ToPoints(RightMargin);
     public float TopMarginPt => ToPoints(TopMargin);
     public float BottomMarginPt => ToPoints(BottomMargin);
+    public float CellBeforeRowMarginPt => ToPoints(CellBeforeRowMargin);
+    public float CellAfterRowMarginPt => ToPoints(CellAfterRowMargin);
+    public float CellBeforeColumnMarginPt => ToPoints(CellBeforeColumnMargin);
+    public float CellAfterColumnMarginPt => ToPoints(CellAfterColumnMargin);
 
     public bool IsBold => FontWeight == Symbol.symbolBold
                        || FontWeight == Symbol.symbolUltraBold

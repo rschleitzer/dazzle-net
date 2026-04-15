@@ -4,6 +4,7 @@ using QuestPDF.Fluent;
 using QuestPDF.Infrastructure;
 using Symbol = OpenJade.Style.FOTBuilder.Symbol;
 using HF = OpenJade.Style.FOTBuilder.HF;
+using ITableCellContainer = QuestPDF.Elements.Table.ITableCellContainer;
 
 public class PdfRenderer
 {
@@ -355,21 +356,23 @@ public class PdfRenderer
 
     private static float LastLeafHalfLeading(PdfContainerNode container)
     {
-        for (int i = container.Children.Count - 1; i >= 0; i--)
-        {
-            if (container.Children[i] is PdfParagraph para)
-                return HalfLeading(para.Characteristics);
-            if (container.Children[i] is PdfContainerNode nested)
-                return LastLeafHalfLeading(nested);
-            return HalfLeading(container.Children[i].Characteristics);
-        }
-        return 0;
+        if (container.Children.Count == 0)
+            return 0;
+        var last = container.Children[^1];
+        if (last is PdfParagraph para)
+            return HalfLeading(para.Characteristics);
+        if (last is PdfContainerNode nested)
+            return LastLeafHalfLeading(nested);
+        return HalfLeading(last.Characteristics);
     }
 
     private void RenderNode(IContainer container, PdfNode node)
     {
         switch (node)
         {
+            case PdfTable table:
+                RenderTable(container, table);
+                break;
             case PdfParagraph para:
                 RenderParagraph(container, para);
                 break;
@@ -637,6 +640,93 @@ public class PdfRenderer
                 });
             }
         });
+    }
+
+    private void RenderTable(IContainer container, PdfTable table)
+    {
+        container.Table(t =>
+        {
+            // Column definitions
+            t.ColumnsDefinition(columns =>
+            {
+                foreach (var col in table.Columns)
+                {
+                    if (col.HasWidth && col.Width > 0)
+                        columns.ConstantColumn(col.WidthPt, Unit.Point);
+                    else if (col.TableUnitFactor > 0)
+                        columns.RelativeColumn((float)col.TableUnitFactor);
+                    else
+                        columns.RelativeColumn();
+                }
+            });
+
+            // Header rows (repeat on every page)
+            if (table.HeaderRows.Count > 0)
+            {
+                t.Header(header =>
+                {
+                    foreach (var row in table.HeaderRows)
+                        RenderTableRow(() => header.Cell(), row);
+                });
+            }
+
+            // Footer rows
+            if (table.FooterRows.Count > 0)
+            {
+                t.Footer(footer =>
+                {
+                    foreach (var row in table.FooterRows)
+                        RenderTableRow(() => footer.Cell(), row);
+                });
+            }
+
+            // Body rows
+            foreach (var row in table.BodyRows)
+                RenderTableRow(() => t.Cell(), row);
+        });
+    }
+
+    private void RenderTableRow(Func<ITableCellContainer> cellFactory, PdfTableRow row)
+    {
+        foreach (var child in row.Children)
+        {
+            if (child is not PdfTableCell cell) continue;
+
+            var chars = cell.Characteristics;
+
+            // QuestPDF cells auto-advance left-to-right, top-to-bottom
+            IContainer cellDesc = cellFactory()
+                .ColumnSpan(cell.NColumnsSpanned)
+                .RowSpan(cell.NRowsSpanned);
+
+            // Cell padding from DSSSL cell margins
+            if (chars.CellBeforeRowMargin > 0)
+                cellDesc = cellDesc.PaddingTop(chars.CellBeforeRowMarginPt, Unit.Point);
+            if (chars.CellAfterRowMargin > 0)
+                cellDesc = cellDesc.PaddingBottom(chars.CellAfterRowMarginPt, Unit.Point);
+            if (chars.CellBeforeColumnMargin > 0)
+                cellDesc = cellDesc.PaddingLeft(chars.CellBeforeColumnMarginPt, Unit.Point);
+            if (chars.CellAfterColumnMargin > 0)
+                cellDesc = cellDesc.PaddingRight(chars.CellAfterColumnMarginPt, Unit.Point);
+
+            // Background color
+            if (chars.HasBackgroundColor)
+                cellDesc = cellDesc.Background(
+                    Color.FromRGB(chars.BackgroundR, chars.BackgroundG, chars.BackgroundB));
+
+            // Vertical alignment
+            if (chars.CellRowAlignment == Symbol.symbolCenter)
+                cellDesc = cellDesc.AlignMiddle();
+            else if (chars.CellRowAlignment == Symbol.symbolEnd)
+                cellDesc = cellDesc.AlignBottom();
+
+            // Border
+            var borderColor = Color.FromRGB(chars.ColorR, chars.ColorG, chars.ColorB);
+            cellDesc = cellDesc.Border(0.5f, Unit.Point).BorderColor(borderColor);
+
+            // Cell content
+            cellDesc.Column(col => RenderChildren(col, cell.Children));
+        }
     }
 
     private void RenderContainerNode(IContainer container, PdfContainerNode group)

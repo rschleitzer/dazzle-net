@@ -127,6 +127,52 @@ public class PdfLocationMark : PdfNode
     }
 }
 
+// Table: contains columns, header rows, body rows, footer rows
+public class PdfTable : PdfNode
+{
+    public List<PdfTableColumn> Columns { get; } = new();
+    public List<PdfTableRow> HeaderRows { get; } = new();
+    public List<PdfTableRow> BodyRows { get; } = new();
+    public List<PdfTableRow> FooterRows { get; } = new();
+
+    public PdfTable(PdfCharacteristics characteristics) : base(characteristics) { }
+}
+
+// Column definition within a table
+public class PdfTableColumn
+{
+    public uint ColumnIndex { get; set; }
+    public uint NColumnsSpanned { get; set; } = 1;
+    public bool HasWidth { get; set; }
+    public long Width { get; set; }
+    public double TableUnitFactor { get; set; }
+
+    public float WidthPt => PdfCharacteristics.ToPoints(Width);
+}
+
+// Row in a table (contains cells)
+public class PdfTableRow : PdfContainerNode
+{
+    public PdfTableRow(PdfCharacteristics characteristics) : base(characteristics) { }
+}
+
+// Cell in a table row (contains flow content)
+public class PdfTableCell : PdfContainerNode
+{
+    public uint ColumnIndex { get; }
+    public uint NColumnsSpanned { get; }
+    public uint NRowsSpanned { get; }
+
+    public PdfTableCell(PdfCharacteristics characteristics, uint columnIndex,
+        uint nColumnsSpanned, uint nRowsSpanned)
+        : base(characteristics)
+    {
+        ColumnIndex = columnIndex;
+        NColumnsSpanned = nColumnsSpanned;
+        NRowsSpanned = nRowsSpanned;
+    }
+}
+
 // Leaf: external image
 public class PdfExternalGraphic : PdfNode
 {
