@@ -1,88 +1,79 @@
 namespace Dazzle.Pdf;
 
-using QuestPDF.Fluent;
-using QuestPDF.Infrastructure;
+using MigraDoc.DocumentObjectModel;
+using MigraDoc.DocumentObjectModel.Tables;
+using MigraDoc.Rendering;
 using Symbol = OpenJade.Style.FOTBuilder.Symbol;
 using HF = OpenJade.Style.FOTBuilder.HF;
-using ITableCellContainer = QuestPDF.Elements.Table.ITableCellContainer;
+using MdColor = MigraDoc.DocumentObjectModel.Color;
+using MdUnit = MigraDoc.DocumentObjectModel.Unit;
 
 public class PdfRenderer
 {
     public void Render(List<PdfPageSequence> pageSequences, string outputPath)
     {
-        QuestPDF.Settings.License = LicenseType.Community;
-
-        var nonEmpty = pageSequences.Where(ps => ps.Children.Count > 0).ToList();
-        Document.Create(container =>
-        {
-            foreach (var pageSequence in nonEmpty)
-                RenderPageSequence(container, pageSequence);
-        }).GeneratePdf(outputPath);
+        var doc = BuildDocument(pageSequences);
+        var renderer = new PdfDocumentRenderer();
+        renderer.Document = doc;
+        renderer.RenderDocument();
+        renderer.PdfDocument.Save(outputPath);
     }
 
     public void Render(List<PdfPageSequence> pageSequences, Stream stream)
     {
-        QuestPDF.Settings.License = LicenseType.Community;
-
-        var nonEmpty = pageSequences.Where(ps => ps.Children.Count > 0).ToList();
-        Document.Create(container =>
-        {
-            foreach (var pageSequence in nonEmpty)
-                RenderPageSequence(container, pageSequence);
-        }).GeneratePdf(stream);
+        var doc = BuildDocument(pageSequences);
+        var renderer = new PdfDocumentRenderer();
+        renderer.Document = doc;
+        renderer.RenderDocument();
+        renderer.PdfDocument.Save(stream, false);
     }
 
-    private int pageSequenceIndex_;
+    private Document BuildDocument(List<PdfPageSequence> pageSequences)
+    {
+        var doc = new Document();
+        var nonEmpty = pageSequences.Where(ps => ps.Children.Count > 0).ToList();
+        foreach (var ps in nonEmpty)
+            RenderPageSequence(doc, ps);
+        return doc;
+    }
 
-    private void RenderPageSequence(IDocumentContainer container, PdfPageSequence pageSequence)
+    // ==================== Page Sequence → Section ====================
+
+    private void RenderPageSequence(Document doc, PdfPageSequence pageSequence)
     {
         var chars = pageSequence.Characteristics;
-        var sectionName = $"__ps_{pageSequenceIndex_++}";
+        var section = doc.AddSection();
 
-        container.Page(page =>
-        {
-            page.Size(chars.PageWidthPt, chars.PageHeightPt, Unit.Point);
-            page.MarginLeft(chars.LeftMarginPt, Unit.Point);
-            page.MarginRight(chars.RightMarginPt, Unit.Point);
-            page.MarginTop(chars.TopMarginPt, Unit.Point);
-            page.MarginBottom(0);
+        section.PageSetup.PageWidth = MdUnit.FromPoint(chars.PageWidthPt);
+        section.PageSetup.PageHeight = MdUnit.FromPoint(chars.PageHeightPt);
+        section.PageSetup.LeftMargin = MdUnit.FromPoint(chars.LeftMarginPt);
+        section.PageSetup.RightMargin = MdUnit.FromPoint(chars.RightMarginPt);
+        section.PageSetup.TopMargin = MdUnit.FromPoint(chars.TopMarginPt);
+        section.PageSetup.BottomMargin = MdUnit.FromPoint(chars.BottomMarginPt);
+        section.PageSetup.DifferentFirstPageHeaderFooter = true;
 
-            // Header: first-page with ShowOnce, other-pages with SkipOnce
-            page.Header().Column(col =>
-            {
-                col.Item().ShowOnce().Element(c =>
-                    RenderHeaderFooter(c, pageSequence,
-                        (int)(HF.firstHF | HF.frontHF | HF.headerHF)));
-                col.Item().SkipOnce().Element(c =>
-                    RenderHeaderFooter(c, pageSequence,
-                        (int)(HF.otherHF | HF.frontHF | HF.headerHF)));
-            });
+        var format = chars.PageNumberFormat;
 
-            // Footer: full margin height, positioned like RTF (footerMargin=0.5in from page edge)
-            const float footerMarginPt = 36f;
-            page.Footer()
-                .Height(chars.BottomMarginPt, Unit.Point)
-                .AlignBottom()
-                .PaddingBottom(footerMarginPt, Unit.Point)
-                .Column(col =>
-                {
-                    col.Item().ShowOnce().Element(c =>
-                        RenderHeaderFooter(c, pageSequence,
-                            (int)(HF.firstHF | HF.frontHF | HF.footerHF)));
-                    col.Item().SkipOnce().Element(c =>
-                        RenderHeaderFooter(c, pageSequence,
-                            (int)(HF.otherHF | HF.frontHF | HF.footerHF)));
-                });
+        // Headers
+        RenderHeaderFooter(section.Headers.FirstPage, pageSequence,
+            (int)(HF.firstHF | HF.frontHF | HF.headerHF), format);
+        RenderHeaderFooter(section.Headers.Primary, pageSequence,
+            (int)(HF.otherHF | HF.frontHF | HF.headerHF), format);
 
-            page.Content().Section(sectionName).Column(col =>
-            {
-                RenderChildren(col, pageSequence.Children);
-            });
-        });
+        // Footers
+        RenderHeaderFooter(section.Footers.FirstPage, pageSequence,
+            (int)(HF.firstHF | HF.frontHF | HF.footerHF), format);
+        RenderHeaderFooter(section.Footers.Primary, pageSequence,
+            (int)(HF.otherHF | HF.frontHF | HF.footerHF), format);
+
+        // Content
+        RenderChildren(section, pageSequence.Children);
     }
 
-    private static void RenderHeaderFooter(IContainer hfContainer, PdfPageSequence pageSequence,
-        int baseFlags)
+    // ==================== Header/Footer ====================
+
+    private static void RenderHeaderFooter(HeaderFooter hf, PdfPageSequence pageSequence,
+        int baseFlags, string format)
     {
         var left = pageSequence.HeaderFooter[baseFlags | (int)HF.leftHF];
         var center = pageSequence.HeaderFooter[baseFlags | (int)HF.centerHF];
@@ -91,434 +82,218 @@ public class PdfRenderer
         bool hasContent = left.Count > 0 || center.Count > 0 || right.Count > 0;
         if (!hasContent) return;
 
-        var format = pageSequence.Characteristics.PageNumberFormat;
+        // Use a 3-column table for left/center/right layout
+        var table = hf.AddTable();
+        table.Borders.Visible = false;
+        var pageWidth = pageSequence.Characteristics.PageWidthPt
+            - pageSequence.Characteristics.LeftMarginPt
+            - pageSequence.Characteristics.RightMarginPt;
+        var colWidth = pageWidth / 3;
+        table.AddColumn(MdUnit.FromPoint(colWidth));
+        table.AddColumn(MdUnit.FromPoint(colWidth));
+        table.AddColumn(MdUnit.FromPoint(colWidth));
 
-        hfContainer.Row(row =>
-        {
-            // Left-aligned
-            row.RelativeItem().Text(text =>
-            {
-                RenderHFSlotInline(text, left, format);
-            });
+        var row = table.AddRow();
 
-            // Center-aligned
-            row.RelativeItem().Text(text =>
-            {
-                text.AlignCenter();
-                RenderHFSlotInline(text, center, format);
-            });
-
-            // Right-aligned
-            row.RelativeItem().Text(text =>
-            {
-                text.AlignRight();
-                RenderHFSlotInline(text, right, format);
-            });
-        });
+        RenderHFCell(row.Cells[0], left, ParagraphAlignment.Left, format);
+        RenderHFCell(row.Cells[1], center, ParagraphAlignment.Center, format);
+        RenderHFCell(row.Cells[2], right, ParagraphAlignment.Right, format);
     }
 
-    private static void RenderHFSlotInline(TextDescriptor text, List<PdfNode> nodes, string format)
+    private static void RenderHFCell(Cell cell, List<PdfNode> nodes,
+        ParagraphAlignment alignment, string format)
     {
+        if (nodes.Count == 0) return;
+        var para = cell.AddParagraph();
+        para.Format.Alignment = alignment;
+
         foreach (var node in nodes)
         {
             switch (node)
             {
-                case PdfParagraph para:
-                    RenderHFInlineContent(text, para.Children, format);
+                case PdfParagraph p:
+                    RenderHFInline(para, p.Children, format);
                     break;
-                case PdfContainerNode container:
-                    RenderHFInlineContent(text, container.Children, format);
+                case PdfContainerNode c:
+                    RenderHFInline(para, c.Children, format);
                     break;
                 default:
-                    RenderHFInlineContent(text, new List<PdfNode> { node }, format);
+                    RenderHFInline(para, new List<PdfNode> { node }, format);
                     break;
             }
         }
     }
 
-    private static void RenderHFInlineContent(TextDescriptor text, List<PdfNode> children,
-        string format)
+    private static void RenderHFInline(Paragraph para, List<PdfNode> children, string format)
     {
         foreach (var child in children)
         {
             switch (child)
             {
                 case PdfTextRun run:
-                    text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
+                    var ft = para.AddFormattedText(run.Text);
+                    ApplyFont(ft.Font, run.Characteristics);
                     break;
                 case PdfPageNumber pn:
-                    text.CurrentPageNumber()
-                        .Format(n => FormatPageNumber(n, format))
-                        .Style(BuildTextStyle(pn.Characteristics));
+                    para.AddPageField();
                     break;
                 case PdfSequence seq:
-                    RenderHFInlineContent(text, seq.Children, format);
+                    RenderHFInline(para, seq.Children, format);
                     break;
             }
         }
     }
 
-    private static string FormatPageNumber(int? pageNumber, string format)
-    {
-        if (pageNumber == null) return "0";
-        int n = pageNumber.Value;
-        return format switch
-        {
-            "i" => ToRomanLower(n),
-            "I" => ToRomanLower(n).ToUpperInvariant(),
-            _ => n.ToString()
-        };
-    }
+    // ==================== Content rendering ====================
 
-    private static string ToRomanLower(int number)
-    {
-        if (number <= 0) return number.ToString();
-        ReadOnlySpan<(int value, string numeral)> table =
-        [
-            (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
-            (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
-            (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")
-        ];
-        var sb = new System.Text.StringBuilder();
-        foreach (var (value, numeral) in table)
-            while (number >= value) { sb.Append(numeral); number -= value; }
-        return sb.ToString();
-    }
-
-    private static void RenderShiftedSpan(TextDescriptor text, string content,
-        PdfCharacteristics chars)
-    {
-        if (chars.PositionPointShift != 0)
-        {
-            // The DSSSL engine already reduced the font size (e.g. 60% for super/sub).
-            // The reduced size (6.6pt) is smaller than surrounding text (11pt), so
-            // text.Element() won't increase line height. TranslateY shifts visually.
-            float shiftPt = PdfCharacteristics.ToPoints(chars.PositionPointShift);
-            // Superscript: shift up by ~40% of DSSSL value (rest comes from baseline alignment)
-            // Subscript: shift down by full DSSSL value + font descent compensation
-            float translateY;
-            if (shiftPt > 0)
-                translateY = -shiftPt * 0.4f; // up (less than full, baseline already helps)
-            else
-                translateY = -shiftPt + chars.FontSizePt * 0.3f; // down (full + extra)
-            if (shiftPt > 0)
-            {
-                // Superscript: element sits above baseline (fits within ascender)
-                text.Element(TextInjectedElementAlignment.AboveBaseline)
-                    .Text(t => t.Span(content).Style(BuildTextStyle(chars)));
-            }
-            else
-            {
-                // Subscript: BelowBaseline + TranslateY upward to reduce depth.
-                // Full BelowBaseline extends too far down; shift up by ~60% of
-                // font size to sit just slightly below baseline.
-                text.Element(TextInjectedElementAlignment.BelowBaseline)
-                    .TranslateY(-(chars.FontSizePt * 0.6f), Unit.Point)
-                    .Text(t => t.Span(content).Style(BuildTextStyle(chars)));
-            }
-        }
-        else
-            text.Span(content).Style(BuildTextStyle(chars));
-    }
-
-    private static void RenderInlineContent(TextDescriptor text, List<PdfNode> children)
-    {
-        foreach (var child in children)
-        {
-            switch (child)
-            {
-                case PdfTextRun run:
-                    RenderShiftedSpan(text, run.Text, run.Characteristics);
-                    break;
-                case PdfPageNumber pn:
-                    text.CurrentPageNumber().Style(BuildTextStyle(pn.Characteristics));
-                    break;
-                case PdfSequence seq:
-                    RenderInlineContent(text, seq.Children);
-                    break;
-                case PdfLeader leader:
-                    // Emit leader character (typically ".") repeated as fill
-                    string dot = ".";
-                    if (leader.Children.Count > 0 && leader.Children[0] is PdfTextRun lr)
-                        dot = lr.Text;
-                    text.Span(" " + new string(dot[0], 40) + " ")
-                        .Style(BuildTextStyle(leader.Characteristics));
-                    break;
-                case PdfNodePageNumber npn:
-                    text.BeginPageNumberOfSection(npn.LocationName);
-                    break;
-            }
-        }
-    }
-
-    private static bool HasDisplayBreak(PdfNode node) =>
-        node is PdfParagraph or PdfDisplayGroup;
-
-    private void RenderChildren(ColumnDescriptor col, List<PdfNode> children,
-        float accumSpace = 0, float prevBottomHalfLeading = 0)
+    private void RenderChildren(Section section, List<PdfNode> children)
     {
         bool pendingBreak = false;
         foreach (var child in children)
         {
-            bool breakBefore = HasDisplayBreak(child)
+            bool breakBefore = (child is PdfParagraph or PdfDisplayGroup)
                 && child.Characteristics.BreakBefore == Symbol.symbolPage;
 
-            // Collapse break-after + break-before into a single page break
             if (pendingBreak || breakBefore)
-            {
-                col.Item().PageBreak();
-                accumSpace = 0;
-            }
+                section.AddPageBreak();
             pendingBreak = false;
 
-            // DSSSL space model: collapse adjacent SpaceAfter/SpaceBefore (take max).
-            // Container nodes (display-group, scroll, sequence) don't add visible
-            // spacing themselves — their SpaceBefore/After propagates through to
-            // children, like RTF's accumSpace_ carries across nesting boundaries.
-            // Skip invisible nodes (location marks) — they don't affect spacing
-            if (child is PdfLocationMark)
-            {
-                col.Item().Element(container => RenderNode(container, child));
-                continue;
-            }
+            RenderNode(section, child);
 
-            bool isContainer = child is PdfDisplayGroup or PdfScroll or PdfSequence;
-            float spaceBefore = child.Characteristics.SpaceBeforePt;
-            float collapsedSpace = Math.Max(accumSpace, spaceBefore);
-
-            // QuestPDF's LineHeight and Word's \sl both add half-leading at paragraph
-            // edges. Since \sb/\sa in RTF is the space BETWEEN paragraph boxes (which
-            // already include line-height), no compensation is needed — PaddingTop
-            // directly corresponds to the collapsed DSSSL space.
-            float adjustedSpace = collapsedSpace;
-
-
-            if (isContainer)
-            {
-                var cnode = (PdfContainerNode)child;
-                // Capture values for lambda (avoid C# closure over modified variable)
-                float capturedCollapsed = collapsedSpace;
-                float capturedPrevBHL = prevBottomHalfLeading;
-                col.Item().Element(cont =>
-                {
-                    var styled = ApplyBlockCharacteristics(cont, cnode.Characteristics);
-                    styled.Column(innerCol =>
-                    {
-                        RenderChildren(innerCol, cnode.Children,
-                            capturedCollapsed, capturedPrevBHL);
-                    });
-                });
-                prevBottomHalfLeading = LastLeafHalfLeading(cnode);
-            }
-            else
-            {
-                float adjustedSpaceFinal = collapsedSpace;
-                if (adjustedSpaceFinal > 0)
-                    col.Item().PaddingTop(adjustedSpaceFinal, Unit.Point)
-                        .Element(container => RenderNode(container, child));
-                else
-                    col.Item().Element(container => RenderNode(container, child));
-                prevBottomHalfLeading = HalfLeading(child.Characteristics);
-            }
-
-            accumSpace = child.Characteristics.SpaceAfterPt;
-
-            if (HasDisplayBreak(child)
+            if ((child is PdfParagraph or PdfDisplayGroup)
                 && child.Characteristics.BreakAfter == Symbol.symbolPage)
                 pendingBreak = true;
         }
     }
 
-    // QuestPDF LineHeight distributes extra space (leading) as half above and half
-    // below each line. This half-leading must be subtracted from inter-element
-    // spacing to match RTF/Word behavior where line-spacing is internal to paragraphs.
-    private static float HalfLeading(PdfCharacteristics chars)
+    private void RenderChildrenToCell(Cell cell, List<PdfNode> children)
     {
-        if (chars.LineSpacing > 0 && chars.FontSize > 0)
-            return Math.Max(0, (chars.LineSpacingPt - chars.FontSizePt) / 2);
-        return 0;
+        foreach (var child in children)
+            RenderNodeToContainer(cell, child);
     }
 
-    private static float FirstLeafHalfLeading(PdfContainerNode container)
-    {
-        foreach (var child in container.Children)
-        {
-            // Paragraphs are block-level leaves for spacing purposes.
-            // Only recurse into pass-through containers (display-group, scroll, sequence).
-            if (child is PdfParagraph para)
-                return HalfLeading(para.Characteristics);
-            if (child is PdfContainerNode nested)
-                return FirstLeafHalfLeading(nested);
-            return HalfLeading(child.Characteristics);
-        }
-        return 0;
-    }
-
-    private static float LastLeafHalfLeading(PdfContainerNode container)
-    {
-        if (container.Children.Count == 0)
-            return 0;
-        var last = container.Children[^1];
-        if (last is PdfParagraph para)
-            return HalfLeading(para.Characteristics);
-        if (last is PdfContainerNode nested)
-            return LastLeafHalfLeading(nested);
-        return HalfLeading(last.Characteristics);
-    }
-
-    private void RenderNode(IContainer container, PdfNode node)
+    private void RenderNode(Section section, PdfNode node)
     {
         switch (node)
         {
             case PdfTable table:
-                RenderTable(container, table);
+                RenderTable(section, table);
                 break;
             case PdfParagraph para:
-                RenderParagraph(container, para);
+                RenderParagraph(section, para);
                 break;
             case PdfDisplayGroup group:
-                RenderContainerNode(container, group);
+                RenderChildren(section, group.Children);
                 break;
             case PdfScroll scroll:
-                RenderContainerNode(container, scroll);
+                RenderChildren(section, scroll.Children);
                 break;
             case PdfSequence seq:
-                RenderSequence(container, seq);
+                RenderChildren(section, seq.Children);
                 break;
             case PdfTextRun run:
-                RenderTextRun(container, run);
-                break;
-            case PdfPageNumber pn:
-                RenderPageNumber(container, pn);
+                var p = section.AddParagraph();
+                var ft = p.AddFormattedText(run.Text);
+                ApplyFont(ft.Font, run.Characteristics);
                 break;
             case PdfRule rule:
-                RenderRule(container, rule);
+                RenderRule(section, rule);
                 break;
             case PdfExternalGraphic graphic:
-                RenderExternalGraphic(container, graphic);
+                RenderExternalGraphic(section, graphic);
                 break;
             case PdfLocationMark loc:
-                container.Section(loc.LocationName);
+                var bm = section.AddParagraph();
+                bm.Format.SpaceBefore = 0;
+                bm.Format.SpaceAfter = 0;
+                bm.Format.Font.Size = 1;
+                bm.AddBookmark(loc.LocationName);
                 break;
         }
     }
 
-    private static void RenderParagraph(IContainer container, PdfParagraph para)
+    private void RenderNodeToContainer(Cell cell, PdfNode node)
+    {
+        switch (node)
+        {
+            case PdfParagraph para:
+                RenderParagraphToCell(cell, para);
+                break;
+            case PdfDisplayGroup group:
+                RenderChildrenToCell(cell, group.Children);
+                break;
+            case PdfScroll scroll:
+                RenderChildrenToCell(cell, scroll.Children);
+                break;
+            case PdfSequence seq:
+                RenderChildrenToCell(cell, seq.Children);
+                break;
+            case PdfTextRun run:
+                var p = cell.AddParagraph();
+                var ft = p.AddFormattedText(run.Text);
+                ApplyFont(ft.Font, run.Characteristics);
+                break;
+            case PdfExternalGraphic graphic:
+                RenderExternalGraphicToCell(cell, graphic);
+                break;
+        }
+    }
+
+    // ==================== Paragraph ====================
+
+    private void RenderParagraph(Section section, PdfParagraph para)
     {
         var chars = para.Characteristics;
-
-        // DSSSL start-indent is absolute from the reference area edge.
-        // first-line-start-indent is relative to start-indent.
-        // Negative first-line-start-indent = hanging indent (first line outdented).
-        // QuestPDF only supports non-negative ParagraphFirstLineIndentation,
-        // so for hanging indents we reduce PaddingLeft to the first-line position.
-        var styled = ApplyBlockCharacteristics(container, chars, applyIndent: false);
-        if (chars.EndIndent > 0)
-            styled = styled.PaddingRight(chars.EndIndentPt, Unit.Point);
-
         var segments = FlattenInline(para.Children);
         int leaderIdx = segments.FindIndex(s => s.Kind == SegmentKind.Leader);
 
         if (leaderIdx >= 0)
         {
-            // TOC-style: leader check takes priority over hanging indent
-            float firstLinePt = Math.Max(0, chars.StartIndentPt + chars.FirstLineStartIndentPt);
-            styled = styled.PaddingLeft(firstLinePt, Unit.Point);
-        }
-        else if (chars.FirstLineStartIndent < 0)
-        {
-            // Hanging indent: label at firstLine position, body at start-indent.
-            // Render as Row: left column = label (hangWidth), right column = body text.
-            float firstLinePt = Math.Max(0, chars.StartIndentPt + chars.FirstLineStartIndentPt);
-            float hangWidth = Math.Abs(chars.FirstLineStartIndentPt);
-            styled = styled.PaddingLeft(firstLinePt, Unit.Point);
-
-            styled.Row(row =>
-            {
-                row.ConstantItem(hangWidth, Unit.Point).Text(text =>
-                {
-                    text.DefaultTextStyle(BuildTextStyle(chars));
-                    if (segments.Count > 0)
-                        RenderSegments(text, segments.GetRange(0, 1));
-                });
-                row.RelativeItem().Text(text =>
-                {
-                    text.DefaultTextStyle(BuildTextStyle(chars));
-                    if (segments.Count > 1)
-                        RenderSegments(text, segments.GetRange(1, segments.Count - 1));
-                });
-            });
+            RenderLeaderParagraph(section, chars, segments, leaderIdx);
             return;
         }
-        else
-        {
-            if (chars.StartIndent > 0)
-                styled = styled.PaddingLeft(chars.StartIndentPt, Unit.Point);
-        }
 
-        // Leader-based or normal rendering
-
-        if (leaderIdx >= 0)
-        {
-            var before = segments.GetRange(0, leaderIdx);
-            var leaderSeg = segments[leaderIdx];
-            var after = segments.GetRange(leaderIdx + 1, segments.Count - leaderIdx - 1);
-
-            styled.Row(row =>
-            {
-                // Entry title (auto-width, left-aligned)
-                row.AutoItem().AlignBottom().Text(text =>
-                {
-                    text.DefaultTextStyle(BuildTextStyle(chars));
-                    RenderSegments(text, before);
-                });
-
-                // Dot leader (fills remaining space)
-                char dot = leaderSeg.Text != null && leaderSeg.Text.Length > 0
-                    ? leaderSeg.Text[0] : '.';
-                row.RelativeItem()
-                    .AlignBottom()
-                    .PaddingHorizontal(2, Unit.Point)
-                    .Text(text =>
-                    {
-                        text.DefaultTextStyle(BuildTextStyle(leaderSeg.Chars));
-                        text.ClampLines(1, "");
-                        text.Span(new string(dot, 200));
-                    });
-
-                // Page number (auto-width, right-aligned)
-                row.AutoItem().AlignBottom().Text(text =>
-                {
-                    text.DefaultTextStyle(BuildTextStyle(chars));
-                    RenderSegments(text, after);
-                });
-            });
-        }
-        else if (segments.Any(s => s.Kind == SegmentKind.ExternalGraphic))
-        {
-            // Paragraph with embedded graphics: render as column of text + images
-            RenderParagraphWithGraphics(styled, chars, segments);
-        }
-        else
-        {
-            styled.Text(text =>
-            {
-                text.DefaultTextStyle(BuildTextStyle(chars));
-
-                if (chars.FirstLineStartIndent > 0)
-                    text.ParagraphFirstLineIndentation(chars.FirstLineStartIndentPt, Unit.Point);
-
-                if (chars.Quadding == Symbol.symbolCenter)
-                    text.AlignCenter();
-                else if (chars.Quadding == Symbol.symbolEnd)
-                    text.AlignRight();
-                else if (chars.Quadding == Symbol.symbolJustify)
-                    text.Justify();
-
-                RenderSegments(text, segments);
-            });
-        }
+        var mdPara = section.AddParagraph();
+        ApplyParagraphFormat(mdPara, chars);
+        RenderSegments(mdPara, segments);
     }
+
+    private void RenderParagraphToCell(Cell cell, PdfParagraph para)
+    {
+        var chars = para.Characteristics;
+        var segments = FlattenInline(para.Children);
+        var mdPara = cell.AddParagraph();
+        ApplyParagraphFormat(mdPara, chars);
+        RenderSegments(mdPara, segments);
+    }
+
+    private void RenderLeaderParagraph(Section section, PdfCharacteristics chars,
+        List<InlineSegment> segments, int leaderIdx)
+    {
+        var mdPara = section.AddParagraph();
+        ApplyParagraphFormat(mdPara, chars);
+
+        // Right-aligned tab stop with dot leader
+        var pageWidth = section.PageSetup.PageWidth - section.PageSetup.LeftMargin
+            - section.PageSetup.RightMargin;
+        char dot = '.';
+        if (segments[leaderIdx].Text != null && segments[leaderIdx].Text!.Length > 0)
+            dot = segments[leaderIdx].Text![0];
+        var leader = dot == '.' ? TabLeader.Dots : TabLeader.Lines;
+        mdPara.Format.TabStops.AddTabStop(pageWidth, TabAlignment.Right, leader);
+
+        // Render text before leader
+        for (int i = 0; i < leaderIdx; i++)
+            RenderSegment(mdPara, segments[i]);
+
+        mdPara.AddTab();
+
+        // Render text after leader (page number etc.)
+        for (int i = leaderIdx + 1; i < segments.Count; i++)
+            RenderSegment(mdPara, segments[i]);
+    }
+
+    // ==================== Inline segments ====================
 
     private enum SegmentKind { Text, PageNumber, NodePageNumber, Leader, ExternalGraphic }
     private record InlineSegment(SegmentKind Kind, string? Text, string? LocationName,
@@ -557,8 +332,6 @@ public class PdfRenderer
                     FlattenInlineRecursive(seq.Children, result);
                     break;
                 case PdfParagraph nestedPara:
-                    // Recurse into nested paragraphs (e.g. figure wrappers
-                    // containing Paragraph/Paragraph/Sequence with graphics)
                     FlattenInlineRecursive(nestedPara.Children, result);
                     break;
                 case PdfExternalGraphic graphic:
@@ -569,25 +342,156 @@ public class PdfRenderer
         }
     }
 
-    private static void RenderSegments(TextDescriptor text, List<InlineSegment> segments)
+    private static void RenderSegments(Paragraph para, List<InlineSegment> segments)
     {
         foreach (var seg in segments)
+            RenderSegment(para, seg);
+    }
+
+    private static void RenderSegment(Paragraph para, InlineSegment seg)
+    {
+        switch (seg.Kind)
         {
-            switch (seg.Kind)
-            {
-                case SegmentKind.Text:
-                    RenderShiftedSpan(text, seg.Text!, seg.Chars);
-                    break;
-                case SegmentKind.PageNumber:
-                    text.CurrentPageNumber();
-                    break;
-                case SegmentKind.NodePageNumber:
-                    text.BeginPageNumberOfSection(seg.LocationName!);
-                    break;
-                // ExternalGraphic is handled by RenderParagraphWithGraphics, not inline
-            }
+            case SegmentKind.Text:
+                if (seg.Chars.PositionPointShift > 0)
+                {
+                    var sup = para.AddFormattedText(seg.Text!);
+                    ApplyFont(sup.Font, seg.Chars);
+                    sup.Superscript = true;
+                }
+                else if (seg.Chars.PositionPointShift < 0)
+                {
+                    var sub = para.AddFormattedText(seg.Text!);
+                    ApplyFont(sub.Font, seg.Chars);
+                    sub.Subscript = true;
+                }
+                else
+                {
+                    var ft = para.AddFormattedText(seg.Text!);
+                    ApplyFont(ft.Font, seg.Chars);
+                }
+                break;
+            case SegmentKind.PageNumber:
+                para.AddPageField();
+                break;
+            case SegmentKind.NodePageNumber:
+                // MigraDoc doesn't have cross-reference page numbers.
+                // Add a bookmark reference placeholder.
+                para.AddText("?");
+                break;
+            case SegmentKind.ExternalGraphic when seg.Graphic != null:
+                var path = ResolveImagePath(seg.Graphic.SystemId);
+                if (File.Exists(path))
+                    para.AddImage(path);
+                break;
         }
     }
+
+    // ==================== Table ====================
+
+    private void RenderTable(Section section, PdfTable pdfTable)
+    {
+        var table = section.AddTable();
+        table.Borders.Width = 0.5;
+        table.Borders.Color = Colors.Black;
+
+        // Column definitions
+        foreach (var col in pdfTable.Columns)
+        {
+            if (col.HasWidth && col.Width > 0)
+                table.AddColumn(MdUnit.FromPoint(col.WidthPt));
+            else
+                table.AddColumn();
+        }
+
+        // Header rows
+        foreach (var row in pdfTable.HeaderRows)
+        {
+            var mdRow = table.AddRow();
+            mdRow.HeadingFormat = true;
+            RenderTableRowCells(mdRow, row);
+        }
+
+        // Body rows
+        foreach (var row in pdfTable.BodyRows)
+        {
+            var mdRow = table.AddRow();
+            RenderTableRowCells(mdRow, row);
+        }
+
+        // Footer rows
+        foreach (var row in pdfTable.FooterRows)
+        {
+            var mdRow = table.AddRow();
+            RenderTableRowCells(mdRow, row);
+        }
+    }
+
+    private void RenderTableRowCells(Row mdRow, PdfTableRow pdfRow)
+    {
+        int colIdx = 0;
+        foreach (var child in pdfRow.Children)
+        {
+            if (child is not PdfTableCell pdfCell) continue;
+
+            var cell = mdRow.Cells[colIdx];
+            var chars = pdfCell.Characteristics;
+
+            // Cell spanning
+            if (pdfCell.NColumnsSpanned > 1)
+                cell.MergeRight = (int)(pdfCell.NColumnsSpanned - 1);
+            if (pdfCell.NRowsSpanned > 1)
+                cell.MergeDown = (int)(pdfCell.NRowsSpanned - 1);
+
+            // Background color
+            if (chars.HasBackgroundColor)
+                cell.Shading.Color = ToMdColor(chars.BackgroundR, chars.BackgroundG, chars.BackgroundB);
+
+            // Vertical alignment
+            if (chars.CellRowAlignment == Symbol.symbolCenter)
+                cell.VerticalAlignment = VerticalAlignment.Center;
+            else if (chars.CellRowAlignment == Symbol.symbolEnd)
+                cell.VerticalAlignment = VerticalAlignment.Bottom;
+
+            // Cell content
+            RenderChildrenToCell(cell, pdfCell.Children);
+
+            // Apply cell margins to the paragraphs inside
+            foreach (var obj in cell.Elements)
+            {
+                if (obj is Paragraph p)
+                {
+                    if (chars.CellBeforeColumnMargin > 0)
+                        p.Format.LeftIndent = MdUnit.FromPoint(chars.CellBeforeColumnMarginPt);
+                    if (chars.CellAfterColumnMargin > 0)
+                        p.Format.RightIndent = MdUnit.FromPoint(chars.CellAfterColumnMarginPt);
+                    if (chars.CellBeforeRowMargin > 0)
+                        p.Format.SpaceBefore = MdUnit.FromPoint(chars.CellBeforeRowMarginPt);
+                    if (chars.CellAfterRowMargin > 0)
+                        p.Format.SpaceAfter = MdUnit.FromPoint(chars.CellAfterRowMarginPt);
+                }
+            }
+
+            colIdx += (int)pdfCell.NColumnsSpanned;
+        }
+    }
+
+    // ==================== Rule ====================
+
+    private static void RenderRule(Section section, PdfRule rule)
+    {
+        var chars = rule.Characteristics;
+        if (rule.Orientation == Symbol.symbolHorizontal)
+        {
+            var para = section.AddParagraph();
+            para.Format.SpaceBefore = MdUnit.FromPoint(chars.SpaceBeforePt);
+            para.Format.SpaceAfter = MdUnit.FromPoint(chars.SpaceAfterPt);
+            para.Format.Borders.Bottom.Width = 1;
+            para.Format.Borders.Bottom.Color = ToMdColor(chars.ColorR, chars.ColorG, chars.ColorB);
+        }
+    }
+
+    // ==================== External Graphic ====================
 
     private static string ResolveImagePath(string systemId)
     {
@@ -599,258 +503,80 @@ public class PdfRenderer
         return path;
     }
 
-    // Render a paragraph that contains external graphics as a Column of text+images
-    private static void RenderParagraphWithGraphics(IContainer container,
-        PdfCharacteristics chars, List<InlineSegment> segments)
-    {
-        container.Column(col =>
-        {
-            var textSegs = new List<InlineSegment>();
-            foreach (var seg in segments)
-            {
-                if (seg.Kind == SegmentKind.ExternalGraphic && seg.Graphic != null)
-                {
-                    // Flush accumulated text segments
-                    if (textSegs.Count > 0)
-                    {
-                        var captured = new List<InlineSegment>(textSegs);
-                        col.Item().Text(text =>
-                        {
-                            text.DefaultTextStyle(BuildTextStyle(chars));
-                            RenderSegments(text, captured);
-                        });
-                        textSegs.Clear();
-                    }
-                    // Render graphic as block element
-                    var graphic = seg.Graphic;
-                    col.Item().Element(c => RenderExternalGraphic(c, graphic));
-                }
-                else
-                {
-                    textSegs.Add(seg);
-                }
-            }
-            // Flush remaining text
-            if (textSegs.Count > 0)
-            {
-                col.Item().Text(text =>
-                {
-                    text.DefaultTextStyle(BuildTextStyle(chars));
-                    RenderSegments(text, textSegs);
-                });
-            }
-        });
-    }
-
-    private void RenderTable(IContainer container, PdfTable table)
-    {
-        container.Table(t =>
-        {
-            // Column definitions
-            t.ColumnsDefinition(columns =>
-            {
-                foreach (var col in table.Columns)
-                {
-                    if (col.HasWidth && col.Width > 0)
-                        columns.ConstantColumn(col.WidthPt, Unit.Point);
-                    else if (col.TableUnitFactor > 0)
-                        columns.RelativeColumn((float)col.TableUnitFactor);
-                    else
-                        columns.RelativeColumn();
-                }
-            });
-
-            // Header rows (repeat on every page)
-            if (table.HeaderRows.Count > 0)
-            {
-                t.Header(header =>
-                {
-                    foreach (var row in table.HeaderRows)
-                        RenderTableRow(() => header.Cell(), row);
-                });
-            }
-
-            // Footer rows
-            if (table.FooterRows.Count > 0)
-            {
-                t.Footer(footer =>
-                {
-                    foreach (var row in table.FooterRows)
-                        RenderTableRow(() => footer.Cell(), row);
-                });
-            }
-
-            // Body rows
-            foreach (var row in table.BodyRows)
-                RenderTableRow(() => t.Cell(), row);
-        });
-    }
-
-    private void RenderTableRow(Func<ITableCellContainer> cellFactory, PdfTableRow row)
-    {
-        foreach (var child in row.Children)
-        {
-            if (child is not PdfTableCell cell) continue;
-
-            var chars = cell.Characteristics;
-
-            // QuestPDF cells auto-advance left-to-right, top-to-bottom
-            IContainer cellDesc = cellFactory()
-                .ColumnSpan(cell.NColumnsSpanned)
-                .RowSpan(cell.NRowsSpanned);
-
-            // Cell padding from DSSSL cell margins
-            if (chars.CellBeforeRowMargin > 0)
-                cellDesc = cellDesc.PaddingTop(chars.CellBeforeRowMarginPt, Unit.Point);
-            if (chars.CellAfterRowMargin > 0)
-                cellDesc = cellDesc.PaddingBottom(chars.CellAfterRowMarginPt, Unit.Point);
-            if (chars.CellBeforeColumnMargin > 0)
-                cellDesc = cellDesc.PaddingLeft(chars.CellBeforeColumnMarginPt, Unit.Point);
-            if (chars.CellAfterColumnMargin > 0)
-                cellDesc = cellDesc.PaddingRight(chars.CellAfterColumnMarginPt, Unit.Point);
-
-            // Background color
-            if (chars.HasBackgroundColor)
-                cellDesc = cellDesc.Background(
-                    Color.FromRGB(chars.BackgroundR, chars.BackgroundG, chars.BackgroundB));
-
-            // Vertical alignment
-            if (chars.CellRowAlignment == Symbol.symbolCenter)
-                cellDesc = cellDesc.AlignMiddle();
-            else if (chars.CellRowAlignment == Symbol.symbolEnd)
-                cellDesc = cellDesc.AlignBottom();
-
-            // Border
-            var borderColor = Color.FromRGB(chars.ColorR, chars.ColorG, chars.ColorB);
-            cellDesc = cellDesc.Border(0.5f, Unit.Point).BorderColor(borderColor);
-
-            // Cell content
-            cellDesc.Column(col => RenderChildren(col, cell.Children));
-        }
-    }
-
-    private void RenderContainerNode(IContainer container, PdfContainerNode group)
-    {
-        var chars = group.Characteristics;
-        var styled = ApplyBlockCharacteristics(container, chars);
-
-        styled.Column(col =>
-        {
-            RenderChildren(col, group.Children);
-        });
-    }
-
-    private void RenderSequence(IContainer container, PdfSequence seq)
-    {
-        // Sequence is a pass-through container — render children in a column
-        container.Column(col =>
-        {
-            RenderChildren(col, seq.Children);
-        });
-    }
-
-    private static void RenderTextRun(IContainer container, PdfTextRun run)
-    {
-        container.Text(text =>
-        {
-            text.Span(run.Text).Style(BuildTextStyle(run.Characteristics));
-        });
-    }
-
-    private static void RenderPageNumber(IContainer container, PdfPageNumber pn)
-    {
-        container.Text(text =>
-        {
-            text.DefaultTextStyle(BuildTextStyle(pn.Characteristics));
-            text.CurrentPageNumber();
-        });
-    }
-
-    private static void RenderRule(IContainer container, PdfRule rule)
-    {
-        var chars = rule.Characteristics;
-        var color = Color.FromRGB(chars.ColorR, chars.ColorG, chars.ColorB);
-
-        if (rule.Orientation == Symbol.symbolHorizontal)
-        {
-            if (rule.HasLength)
-                container.Width(PdfCharacteristics.ToPoints(rule.Length), Unit.Point)
-                         .LineHorizontal(1, Unit.Point)
-                         .LineColor(color);
-            else
-                container.LineHorizontal(1, Unit.Point)
-                         .LineColor(color);
-        }
-        else
-        {
-            container.LineVertical(1, Unit.Point)
-                     .LineColor(color);
-        }
-    }
-
-    private static void RenderExternalGraphic(IContainer container, PdfExternalGraphic graphic)
+    private static void RenderExternalGraphic(Section section, PdfExternalGraphic graphic)
     {
         string path = ResolveImagePath(graphic.SystemId);
-        if (!File.Exists(path))
-        {
-            container.Text(text => text.Span($"[Image: {graphic.SystemId}]"));
-            return;
-        }
+        if (!File.Exists(path)) return;
 
-        var styled = container;
+        var image = section.AddImage(path);
         if (graphic.HasMaxWidth)
-            styled = styled.MaxWidth(PdfCharacteristics.ToPoints(graphic.MaxWidth), Unit.Point);
+            image.Width = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxWidth));
         if (graphic.HasMaxHeight)
-            styled = styled.MaxHeight(PdfCharacteristics.ToPoints(graphic.MaxHeight), Unit.Point);
-        styled.Image(path).FitWidth();
+            image.Height = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxHeight));
     }
 
-    // Apply block-level characteristics (spacing, background).
-    // Indentation is only applied for paragraphs (applyIndent=true) since
-    // DSSSL start-indent is absolute from the reference area edge, not relative
-    // to the parent container.
-    private static IContainer ApplyBlockCharacteristics(IContainer container, PdfCharacteristics chars,
-        bool applyIndent = false)
+    private static void RenderExternalGraphicToCell(Cell cell, PdfExternalGraphic graphic)
     {
-        IContainer result = container;
+        string path = ResolveImagePath(graphic.SystemId);
+        if (!File.Exists(path)) return;
 
-        // SpaceBefore/SpaceAfter are handled by RenderChildren with DSSSL collapsing
-        // (max of adjacent spaces, not sum). Not applied here.
+        var para = cell.AddParagraph();
+        var image = para.AddImage(path);
+        if (graphic.HasMaxWidth)
+            image.Width = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxWidth));
+        if (graphic.HasMaxHeight)
+            image.Height = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxHeight));
+    }
 
-        if (applyIndent)
-        {
-            if (chars.StartIndent > 0)
-                result = result.PaddingLeft(chars.StartIndentPt, Unit.Point);
-            if (chars.EndIndent > 0)
-                result = result.PaddingRight(chars.EndIndentPt, Unit.Point);
-        }
+    // ==================== Formatting helpers ====================
+
+    private static void ApplyParagraphFormat(Paragraph para, PdfCharacteristics chars)
+    {
+        ApplyFont(para.Format.Font, chars);
+
+        if (chars.SpaceBefore > 0)
+            para.Format.SpaceBefore = MdUnit.FromPoint(chars.SpaceBeforePt);
+        if (chars.SpaceAfter > 0)
+            para.Format.SpaceAfter = MdUnit.FromPoint(chars.SpaceAfterPt);
+
+        if (chars.StartIndent > 0)
+            para.Format.LeftIndent = MdUnit.FromPoint(chars.StartIndentPt);
+        if (chars.EndIndent > 0)
+            para.Format.RightIndent = MdUnit.FromPoint(chars.EndIndentPt);
+        if (chars.FirstLineStartIndent != 0)
+            para.Format.FirstLineIndent = MdUnit.FromPoint(chars.FirstLineStartIndentPt);
+
+        if (chars.LineSpacing > 0 && chars.FontSize > 0)
+            para.Format.LineSpacing = MdUnit.FromPoint(chars.LineSpacingPt);
+
+        if (chars.Quadding == Symbol.symbolCenter)
+            para.Format.Alignment = ParagraphAlignment.Center;
+        else if (chars.Quadding == Symbol.symbolEnd)
+            para.Format.Alignment = ParagraphAlignment.Right;
+        else if (chars.Quadding == Symbol.symbolJustify)
+            para.Format.Alignment = ParagraphAlignment.Justify;
 
         if (chars.HasBackgroundColor)
-            result = result.Background(Color.FromRGB(chars.BackgroundR, chars.BackgroundG, chars.BackgroundB));
+            para.Format.Shading.Color = ToMdColor(chars.BackgroundR, chars.BackgroundG, chars.BackgroundB);
 
-        return result;
+        if (chars.KeepWithNext)
+            para.Format.KeepWithNext = true;
     }
 
-    // Build a QuestPDF TextStyle from characteristics
-    private static TextStyle BuildTextStyle(PdfCharacteristics chars)
+    private static void ApplyFont(Font font, PdfCharacteristics chars)
     {
-        var style = TextStyle.Default
-            .FontFamily(chars.FontFamily)
-            .FontSize(chars.FontSizePt)
-            .FontColor(Color.FromRGB(chars.ColorR, chars.ColorG, chars.ColorB));
+        font.Name = chars.FontFamily;
+        font.Size = chars.FontSizePt;
+        font.Color = ToMdColor(chars.ColorR, chars.ColorG, chars.ColorB);
 
         if (chars.IsBold)
-            style = style.Bold();
+            font.Bold = true;
         if (chars.IsItalic)
-            style = style.Italic();
+            font.Italic = true;
+    }
 
-        if (chars.LineSpacing > 0 && chars.FontSizePt > 0)
-        {
-            float lineHeight = chars.LineSpacingPt / chars.FontSizePt;
-            if (lineHeight >= 1.0f)
-                style = style.LineHeight(lineHeight);
-        }
-
-        return style;
+    private static MdColor ToMdColor(byte r, byte g, byte b)
+    {
+        return new MdColor(r, g, b);
     }
 }

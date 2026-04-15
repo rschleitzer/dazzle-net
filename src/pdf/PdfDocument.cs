@@ -103,7 +103,7 @@ public class PdfLeader : PdfContainerNode
     public PdfLeader(PdfCharacteristics characteristics) : base(characteristics) { }
 }
 
-// Cross-reference page number (resolved by QuestPDF via named locations)
+// Cross-reference page number (resolved via named locations)
 public class PdfNodePageNumber : PdfNode
 {
     public string LocationName { get; }

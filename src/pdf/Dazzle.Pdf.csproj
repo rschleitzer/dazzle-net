@@ -12,8 +12,8 @@
     <PackageId>Dazzle.Pdf</PackageId>
     <Version>0.1.0</Version>
     <Authors>Ralf Schleitzer</Authors>
-    <Description>DSSSL-to-PDF processor using OpenJade and QuestPDF. Includes table support and a clean DssslProcessor API.</Description>
-    <PackageTags>dsssl;openjade;pdf;questpdf</PackageTags>
+    <Description>DSSSL-to-PDF processor using OpenJade and MigraDoc. Includes table support and a clean DssslProcessor API.</Description>
+    <PackageTags>dsssl;openjade;pdf;migradoc;pdfsharp</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/rschleitzer/dazzle-net</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -22,7 +22,7 @@
   <ItemGroup>
     <PackageReference Include="OpenSP" Version="*" />
     <PackageReference Include="OpenJade" Version="*" />
-    <PackageReference Include="QuestPDF" Version="2025.*" />
+    <PackageReference Include="PDFsharp-MigraDoc" Version="6.*" />
   </ItemGroup>
 
   <ItemGroup>
