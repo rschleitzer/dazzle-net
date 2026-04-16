@@ -1023,8 +1023,10 @@ public class PdfRenderer
             var para = section.AddParagraph();
             para.Format.SpaceBefore = MdUnit.FromPoint(chars.SpaceBeforePt);
             para.Format.SpaceAfter = MdUnit.FromPoint(chars.SpaceAfterPt);
-            para.Format.Borders.Bottom.Width = 1;
+            para.Format.Borders.Bottom.Style = BorderStyle.Single;
+            para.Format.Borders.Bottom.Width = 1.0;
             para.Format.Borders.Bottom.Color = ToMdColor(chars.ColorR, chars.ColorG, chars.ColorB);
+            para.Format.Borders.Bottom.Visible = true;
         }
     }
 
