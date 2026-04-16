@@ -834,8 +834,7 @@ public class PdfRenderer
                 }
                 else
                 {
-                    var ft = para.AddFormattedText(seg.Text!);
-                    ApplyFont(ft.Font, seg.Chars);
+                    AddTextWithLineBreaks(para, seg.Text!, seg.Chars);
                 }
                 break;
             case SegmentKind.PageNumber:
@@ -1119,6 +1118,36 @@ public class PdfRenderer
 
         if (chars.KeepWithNext)
             para.Format.KeepWithNext = true;
+    }
+
+    /// Add text to a paragraph, converting \n to MigraDoc line breaks.
+    /// Add text to a paragraph. For verbatim text (containing \n),
+    /// convert newlines to MigraDoc line breaks and preserve spaces
+    /// as non-breaking spaces so MigraDoc doesn't collapse them.
+    private static void AddTextWithLineBreaks(Paragraph para, string text, PdfCharacteristics chars)
+    {
+        bool verbatim = text.Contains('\n');
+        if (!verbatim)
+        {
+            var ft = para.AddFormattedText(text);
+            ApplyFont(ft.Font, chars);
+            return;
+        }
+
+        // Replace regular spaces with non-breaking spaces to preserve indentation
+        text = text.Replace(' ', '\u00A0');
+
+        var lines = text.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].Length > 0)
+            {
+                var ft = para.AddFormattedText(lines[i]);
+                ApplyFont(ft.Font, chars);
+            }
+            if (i < lines.Length - 1)
+                para.AddLineBreak();
+        }
     }
 
     private static void ApplyFont(Font font, PdfCharacteristics chars)
