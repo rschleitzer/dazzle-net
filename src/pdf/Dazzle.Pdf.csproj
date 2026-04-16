@@ -10,7 +10,7 @@
 
     <!-- NuGet Package -->
     <PackageId>Dazzle.Pdf</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Ralf Schleitzer</Authors>
     <Description>DSSSL-to-PDF processor using OpenJade and MigraDoc. Includes table support and a clean DssslProcessor API.</Description>
     <PackageTags>dsssl;openjade;pdf;migradoc;pdfsharp</PackageTags>
@@ -20,8 +20,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\openjade-net\src\OpenSP\OpenSP.csproj" />
-    <ProjectReference Include="..\..\..\openjade-net\src\OpenJade\OpenJade.csproj" />
+    <PackageReference Include="OpenSP" Version="1.5.*" />
+    <PackageReference Include="OpenJade" Version="1.3.4" />
     <PackageReference Include="PDFsharp-MigraDoc" Version="6.*" />
   </ItemGroup>
 
