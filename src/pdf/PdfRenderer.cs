@@ -579,7 +579,11 @@ public class PdfRenderer
                         hfPageFontItalic_ = pn.Characteristics.IsItalic;
                     }
                     else
-                        para.AddPageField();
+                    {
+                        var pft = para.AddFormattedText();
+                        ApplyFont(pft.Font, pn.Characteristics);
+                        pft.AddPageField();
+                    }
                     break;
                 case PdfParagraph p:
                     RenderHFInline(para, p.Children, format);
