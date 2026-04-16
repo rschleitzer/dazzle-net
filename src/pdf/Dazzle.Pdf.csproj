@@ -20,8 +20,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="OpenSP" Version="*" />
-    <PackageReference Include="OpenJade" Version="*" />
+    <ProjectReference Include="..\..\..\openjade-net\src\OpenSP\OpenSP.csproj" />
+    <ProjectReference Include="..\..\..\openjade-net\src\OpenJade\OpenJade.csproj" />
     <PackageReference Include="PDFsharp-MigraDoc" Version="6.*" />
   </ItemGroup>
 

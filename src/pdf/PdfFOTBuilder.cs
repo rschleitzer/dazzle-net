@@ -433,6 +433,82 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void endTablePartSerial() { end(); }
 
+    public override void startTablePart(TablePartNIC nic,
+        out FOTBuilder? header, out FOTBuilder? footer)
+    {
+        ApplyDisplayNIC(nic);
+        characteristicsStack_.Push(current_.Clone());
+        tablePartSection_ = TablePartSection.Body;
+        header = new TablePartPortProxy(this, TablePartSection.Header);
+        footer = new TablePartPortProxy(this, TablePartSection.Footer);
+    }
+
+    public override void endTablePart() { end(); }
+
+    // Forwards all calls to the parent PdfFOTBuilder, but sets tablePartSection_
+    // on entry so rows created during port processing go to HeaderRows/FooterRows.
+    private class TablePartPortProxy : FOTBuilder
+    {
+        private readonly PdfFOTBuilder parent_;
+        private readonly TablePartSection section_;
+
+        public TablePartPortProxy(PdfFOTBuilder parent, TablePartSection section)
+        {
+            parent_ = parent;
+            section_ = section;
+        }
+
+        public override void startTableRow()
+        {
+            var saved = parent_.tablePartSection_;
+            parent_.tablePartSection_ = section_;
+            parent_.startTableRow();
+            parent_.tablePartSection_ = saved;
+        }
+
+        public override void endTableRow() => parent_.endTableRow();
+        public override void startTableCell(TableCellNIC nic) => parent_.startTableCell(nic);
+        public override void endTableCell() => parent_.endTableCell();
+        public override void tableCellBeforeRowBorder()    => parent_.tableCellBeforeRowBorder();
+        public override void tableCellAfterRowBorder()     => parent_.tableCellAfterRowBorder();
+        public override void tableCellBeforeColumnBorder() => parent_.tableCellBeforeColumnBorder();
+        public override void tableCellAfterColumnBorder()  => parent_.tableCellAfterColumnBorder();
+        public override void startParagraph(ParagraphNIC nic) => parent_.startParagraph(nic);
+        public override void endParagraph() => parent_.endParagraph();
+        public override void startSequence() => parent_.startSequence();
+        public override void endSequence() => parent_.endSequence();
+        public override void characters(uint[] data, nuint size) => parent_.characters(data, size);
+        public override void rule(RuleNIC nic) => parent_.rule(nic);
+
+        // Forward characteristic setters
+        public override void setFontSize(long size) => parent_.setFontSize(size);
+        public override void setFontFamilyName(StringC name) => parent_.setFontFamilyName(name);
+        public override void setFontWeight(Symbol weight) => parent_.setFontWeight(weight);
+        public override void setFontPosture(Symbol posture) => parent_.setFontPosture(posture);
+        public override void setColor(DeviceRGBColor color) => parent_.setColor(color);
+        public override void setBackgroundColor(DeviceRGBColor color) => parent_.setBackgroundColor(color);
+        public override void setBackgroundColor() => parent_.setBackgroundColor();
+        public override void setStartIndent(LengthSpec i) => parent_.setStartIndent(i);
+        public override void setEndIndent(LengthSpec i) => parent_.setEndIndent(i);
+        public override void setFirstLineStartIndent(LengthSpec i) => parent_.setFirstLineStartIndent(i);
+        public override void setLineSpacing(LengthSpec s) => parent_.setLineSpacing(s);
+        public override void setQuadding(Symbol q) => parent_.setQuadding(q);
+        public override void setLineThickness(long t) => parent_.setLineThickness(t);
+        public override void setCellBeforeRowMargin(LengthSpec m) => parent_.setCellBeforeRowMargin(m);
+        public override void setCellAfterRowMargin(LengthSpec m) => parent_.setCellAfterRowMargin(m);
+        public override void setCellBeforeColumnMargin(LengthSpec m) => parent_.setCellBeforeColumnMargin(m);
+        public override void setCellAfterColumnMargin(LengthSpec m) => parent_.setCellAfterColumnMargin(m);
+        public override void setCellBeforeRowMargin(long m) => parent_.setCellBeforeRowMargin(m);
+        public override void setCellAfterRowMargin(long m) => parent_.setCellAfterRowMargin(m);
+        public override void setCellBeforeColumnMargin(long m) => parent_.setCellBeforeColumnMargin(m);
+        public override void setCellAfterColumnMargin(long m) => parent_.setCellAfterColumnMargin(m);
+        public override void setCellBackground(bool b) => parent_.setCellBackground(b);
+        public override void setCellRowAlignment(Symbol a) => parent_.setCellRowAlignment(a);
+
+        public override void start() => parent_.start();
+        public override void end() => parent_.end();
+    }
+
     public override void startTablePartHeader()
     {
         characteristicsStack_.Push(current_.Clone());

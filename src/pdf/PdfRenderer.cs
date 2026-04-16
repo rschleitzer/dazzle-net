@@ -528,7 +528,7 @@ public class PdfRenderer
 
     // ==================== Header/Footer ====================
 
-    private static void RenderHeaderFooter(HeaderFooter hf, PdfPageSequence pageSequence,
+    private void RenderHeaderFooter(HeaderFooter hf, PdfPageSequence pageSequence,
         int baseFlags, string format)
     {
         var left = pageSequence.HeaderFooter[baseFlags | (int)HF.leftHF];
@@ -538,8 +538,16 @@ public class PdfRenderer
         bool hasContent = left.Count > 0 || center.Count > 0 || right.Count > 0;
         if (!hasContent) return;
 
-        // DSSSL simple-page-sequence headers/footers are single-line.
-        // Use a single paragraph with tab stops for left/center/right alignment.
+        // Complex content (images, paragraphs, tables, rules) needs full-width block
+        // rendering; simple single-line content (text, page numbers) uses tab stops.
+        bool complex = IsComplexHFContent(left) || IsComplexHFContent(center) || IsComplexHFContent(right);
+        if (complex)
+        {
+            RenderComplexHeaderFooter(hf, left, center, right, format);
+            return;
+        }
+
+        // Simple single-line: paragraph with tab stops for left/center/right alignment
         var pageWidth = pageSequence.Characteristics.PageWidthPt
             - pageSequence.Characteristics.LeftMarginPt
             - pageSequence.Characteristics.RightMarginPt;
@@ -548,14 +556,84 @@ public class PdfRenderer
         para.Format.TabStops.AddTabStop(MdUnit.FromPoint(pageWidth / 2), TabAlignment.Center);
         para.Format.TabStops.AddTabStop(MdUnit.FromPoint(pageWidth), TabAlignment.Right);
 
-        // Left content
         RenderHFInline(para, left, format);
-        // Center content (always emit tab to maintain alignment)
         para.AddTab();
         RenderHFInline(para, center, format);
-        // Right content (always emit tab to maintain alignment)
         para.AddTab();
         RenderHFInline(para, right, format);
+    }
+
+    private static bool IsComplexHFContent(List<PdfNode> nodes)
+    {
+        foreach (var n in nodes)
+        {
+            if (n is PdfExternalGraphic || n is PdfRule || n is PdfTable)
+                return true;
+            if (n is PdfParagraph or PdfDisplayGroup or PdfScroll)
+                return true;
+        }
+        return false;
+    }
+
+    private void RenderComplexHeaderFooter(HeaderFooter hf, List<PdfNode> left,
+        List<PdfNode> center, List<PdfNode> right, string format)
+    {
+        // Render each slot's content as full-width block content, in order: left, center, right.
+        // Use the slot's own content alignment (quadding) rather than forcing positional layout.
+        foreach (var node in left)
+            RenderHFBlockNode(hf, node);
+        foreach (var node in center)
+            RenderHFBlockNode(hf, node);
+        foreach (var node in right)
+            RenderHFBlockNode(hf, node);
+    }
+
+    private void RenderHFBlockNode(HeaderFooter hf, PdfNode node)
+    {
+        switch (node)
+        {
+            case PdfParagraph para:
+                var mdPara = hf.AddParagraph();
+                ApplyParagraphFormat(mdPara, para.Characteristics);
+                RenderSegments(mdPara, FlattenInline(para.Children));
+                break;
+            case PdfExternalGraphic graphic:
+                var imgPara = hf.AddParagraph();
+                var path = ResolveImagePath(graphic.SystemId);
+                if (File.Exists(path))
+                {
+                    var image = imgPara.AddImage(path);
+                    if (graphic.HasMaxWidth)
+                        image.Width = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxWidth));
+                    if (graphic.HasMaxHeight)
+                        image.Height = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxHeight));
+                }
+                break;
+            case PdfRule rule:
+                var rulePara = hf.AddParagraph();
+                var chars = rule.Characteristics;
+                if (chars.SpaceBefore > 0)
+                    rulePara.Format.SpaceBefore = MdUnit.FromPoint(chars.SpaceBeforePt);
+                if (chars.SpaceAfter > 0)
+                    rulePara.Format.SpaceAfter = MdUnit.FromPoint(chars.SpaceAfterPt);
+                rulePara.Format.Borders.Bottom.Style = BorderStyle.Single;
+                rulePara.Format.Borders.Bottom.Width = 1.0;
+                rulePara.Format.Borders.Bottom.Color = ToMdColor(chars.ColorR, chars.ColorG, chars.ColorB);
+                rulePara.Format.Borders.Bottom.Visible = true;
+                break;
+            case PdfDisplayGroup group:
+                foreach (var child in group.Children)
+                    RenderHFBlockNode(hf, child);
+                break;
+            case PdfScroll scroll:
+                foreach (var child in scroll.Children)
+                    RenderHFBlockNode(hf, child);
+                break;
+            case PdfSequence seq:
+                foreach (var child in seq.Children)
+                    RenderHFBlockNode(hf, child);
+                break;
+        }
     }
 
     private static void RenderHFInline(Paragraph para, List<PdfNode> nodes, string format)
