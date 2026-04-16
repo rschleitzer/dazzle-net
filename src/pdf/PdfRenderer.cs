@@ -538,53 +538,31 @@ public class PdfRenderer
         bool hasContent = left.Count > 0 || center.Count > 0 || right.Count > 0;
         if (!hasContent) return;
 
-        // Use a 3-column table for left/center/right layout
-        var table = hf.AddTable();
-        table.Borders.Visible = false;
+        // DSSSL simple-page-sequence headers/footers are single-line.
+        // Use a single paragraph with tab stops for left/center/right alignment.
         var pageWidth = pageSequence.Characteristics.PageWidthPt
             - pageSequence.Characteristics.LeftMarginPt
             - pageSequence.Characteristics.RightMarginPt;
-        var colWidth = pageWidth / 3;
-        table.AddColumn(MdUnit.FromPoint(colWidth));
-        table.AddColumn(MdUnit.FromPoint(colWidth));
-        table.AddColumn(MdUnit.FromPoint(colWidth));
 
-        var row = table.AddRow();
+        var para = hf.AddParagraph();
+        para.Format.TabStops.AddTabStop(MdUnit.FromPoint(pageWidth / 2), TabAlignment.Center);
+        para.Format.TabStops.AddTabStop(MdUnit.FromPoint(pageWidth), TabAlignment.Right);
 
-        RenderHFCell(row.Cells[0], left, ParagraphAlignment.Left, format);
-        RenderHFCell(row.Cells[1], center, ParagraphAlignment.Center, format);
-        RenderHFCell(row.Cells[2], right, ParagraphAlignment.Right, format);
+        // Left content
+        RenderHFInline(para, left, format);
+        // Center content (always emit tab to maintain alignment)
+        para.AddTab();
+        RenderHFInline(para, center, format);
+        // Right content (always emit tab to maintain alignment)
+        para.AddTab();
+        RenderHFInline(para, right, format);
     }
 
-    private static void RenderHFCell(Cell cell, List<PdfNode> nodes,
-        ParagraphAlignment alignment, string format)
+    private static void RenderHFInline(Paragraph para, List<PdfNode> nodes, string format)
     {
-        if (nodes.Count == 0) return;
-        var para = cell.AddParagraph();
-        para.Format.Alignment = alignment;
-
         foreach (var node in nodes)
         {
             switch (node)
-            {
-                case PdfParagraph p:
-                    RenderHFInline(para, p.Children, format);
-                    break;
-                case PdfContainerNode c:
-                    RenderHFInline(para, c.Children, format);
-                    break;
-                default:
-                    RenderHFInline(para, new List<PdfNode> { node }, format);
-                    break;
-            }
-        }
-    }
-
-    private static void RenderHFInline(Paragraph para, List<PdfNode> children, string format)
-    {
-        foreach (var child in children)
-        {
-            switch (child)
             {
                 case PdfTextRun run:
                     var ft = para.AddFormattedText(run.Text);
@@ -603,8 +581,11 @@ public class PdfRenderer
                     else
                         para.AddPageField();
                     break;
-                case PdfSequence seq:
-                    RenderHFInline(para, seq.Children, format);
+                case PdfParagraph p:
+                    RenderHFInline(para, p.Children, format);
+                    break;
+                case PdfContainerNode c:
+                    RenderHFInline(para, c.Children, format);
                     break;
             }
         }
