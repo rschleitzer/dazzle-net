@@ -342,6 +342,27 @@ public class PdfFOTBuilder : FOTBuilder
 
     // ==================== Atomic flow objects ====================
 
+    // Cell border ports: callback fires with characteristics (color, line-thickness) already
+    // set on current_ via set* calls from the border sosofo (when it's a table-border FO).
+    private enum CellBorderPort { BeforeRow, AfterRow, BeforeColumn, AfterColumn }
+    private long lineThickness_ = 500; // DSSSL units; 0.5pt default
+
+    // True when setColor or setLineThickness has been called since the last border capture.
+    // Used to distinguish "undefined" border ports (no DSSSL characteristic set) from
+    // defined ones (where the engine pushes characteristics before the port callback).
+    private bool borderCharacteristicsFresh_ = false;
+
+    // Saved state at startTableCell, so we can undo border-port mutations to current_.
+    // (openjade-net's StyleStack.pop does not invoke set* to restore FOT builder state.)
+    private PdfCharacteristics? cellBaseChars_;
+    private long cellBaseLineThickness_;
+
+    public override void setLineThickness(long thickness)
+    {
+        lineThickness_ = thickness;
+        borderCharacteristicsFresh_ = true;
+    }
+
     public override void rule(RuleNIC nic)
     {
         start();
@@ -349,6 +370,13 @@ public class PdfFOTBuilder : FOTBuilder
         AddNode(new PdfRule(current_, nic.orientation,
             nic.hasLength, nic.hasLength ? nic.length.length : 0));
         end();
+    }
+
+    private PdfTableCell? FindEnclosingCell()
+    {
+        foreach (var node in containerStack_)
+            if (node is PdfTableCell c) return c;
+        return null;
     }
 
     public override void externalGraphic(ExternalGraphicNIC nic)
@@ -457,6 +485,11 @@ public class PdfFOTBuilder : FOTBuilder
     public override void startTableCell(TableCellNIC nic)
     {
         characteristicsStack_.Push(current_.Clone());
+        // Snapshot state before any border-port mutations (the engine pushes border
+        // characteristics but doesn't unwind them after the port callback).
+        cellBaseChars_ = current_.Clone();
+        cellBaseLineThickness_ = lineThickness_;
+        borderCharacteristicsFresh_ = false;
         if (nic.missing)
             return; // Skip auto-generated missing cells
 
@@ -478,10 +511,43 @@ public class PdfFOTBuilder : FOTBuilder
     public override void tableAfterRowBorder() { }
     public override void tableBeforeColumnBorder() { }
     public override void tableAfterColumnBorder() { }
-    public override void tableCellBeforeRowBorder() { }
-    public override void tableCellAfterRowBorder() { }
-    public override void tableCellBeforeColumnBorder() { }
-    public override void tableCellAfterColumnBorder() { }
+    public override void tableCellBeforeRowBorder()    => CaptureCellBorder(CellBorderPort.BeforeRow);
+    public override void tableCellAfterRowBorder()     => CaptureCellBorder(CellBorderPort.AfterRow);
+    public override void tableCellBeforeColumnBorder() => CaptureCellBorder(CellBorderPort.BeforeColumn);
+    public override void tableCellAfterColumnBorder()  => CaptureCellBorder(CellBorderPort.AfterColumn);
+
+    private void CaptureCellBorder(CellBorderPort port)
+    {
+        // Only capture if the DSSSL actually defined this border (setColor/setLineThickness
+        // were called by the engine between last capture and this callback).
+        if (!borderCharacteristicsFresh_) return;
+        borderCharacteristicsFresh_ = false;
+
+        var cell = FindEnclosingCell();
+        if (cell == null) return;
+        var border = new PdfCellBorder
+        {
+            LineThickness = lineThickness_,
+            ColorR = current_.ColorR,
+            ColorG = current_.ColorG,
+            ColorB = current_.ColorB
+        };
+        switch (port)
+        {
+            case CellBorderPort.BeforeRow:    cell.BeforeRowBorder    = border; break;
+            case CellBorderPort.AfterRow:     cell.AfterRowBorder     = border; break;
+            case CellBorderPort.BeforeColumn: cell.BeforeColumnBorder = border; break;
+            case CellBorderPort.AfterColumn:  cell.AfterColumnBorder  = border; break;
+        }
+
+        // Restore pre-border state — the engine's style pop doesn't revert FOT builder state,
+        // so the border color would otherwise leak into the cell's content rendering.
+        if (cellBaseChars_ != null)
+        {
+            current_ = cellBaseChars_.Clone();
+            lineThickness_ = cellBaseLineThickness_;
+        }
+    }
 
     // ==================== Extension flow objects (Phase 2) ====================
 
@@ -521,6 +587,7 @@ public class PdfFOTBuilder : FOTBuilder
         current_.ColorR = color.red;
         current_.ColorG = color.green;
         current_.ColorB = color.blue;
+        borderCharacteristicsFresh_ = true;
     }
 
     public override void setBackgroundColor(DeviceRGBColor color)

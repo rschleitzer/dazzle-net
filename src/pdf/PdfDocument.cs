@@ -163,6 +163,12 @@ public class PdfTableCell : PdfContainerNode
     public uint NColumnsSpanned { get; }
     public uint NRowsSpanned { get; }
 
+    // DSSSL cell border sub-flow-object specifications
+    public PdfCellBorder? BeforeRowBorder { get; set; }
+    public PdfCellBorder? AfterRowBorder { get; set; }
+    public PdfCellBorder? BeforeColumnBorder { get; set; }
+    public PdfCellBorder? AfterColumnBorder { get; set; }
+
     public PdfTableCell(PdfCharacteristics characteristics, uint columnIndex,
         uint nColumnsSpanned, uint nRowsSpanned)
         : base(characteristics)
@@ -171,6 +177,17 @@ public class PdfTableCell : PdfContainerNode
         NColumnsSpanned = nColumnsSpanned;
         NRowsSpanned = nRowsSpanned;
     }
+}
+
+// Border specification for a cell edge, captured from DSSSL rule sub-flow-object
+public class PdfCellBorder
+{
+    public long LineThickness { get; set; } = 500; // default 0.5pt
+    public byte ColorR { get; set; }
+    public byte ColorG { get; set; }
+    public byte ColorB { get; set; }
+
+    public float LineThicknessPt => PdfCharacteristics.ToPoints(LineThickness);
 }
 
 // Leaf: external image

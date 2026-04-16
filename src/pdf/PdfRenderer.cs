@@ -970,6 +970,12 @@ public class PdfRenderer
             if (chars.HasBackgroundColor)
                 cell.Shading.Color = ToMdColor(chars.BackgroundR, chars.BackgroundG, chars.BackgroundB);
 
+            // Cell borders from DSSSL sub-flow-objects
+            ApplyCellBorder(cell.Borders.Top,    pdfCell.BeforeRowBorder);
+            ApplyCellBorder(cell.Borders.Bottom, pdfCell.AfterRowBorder);
+            ApplyCellBorder(cell.Borders.Left,   pdfCell.BeforeColumnBorder);
+            ApplyCellBorder(cell.Borders.Right,  pdfCell.AfterColumnBorder);
+
             // Vertical alignment
             if (chars.CellRowAlignment == Symbol.symbolCenter)
                 cell.VerticalAlignment = VerticalAlignment.Center;
@@ -997,6 +1003,15 @@ public class PdfRenderer
 
             colIdx += (int)pdfCell.NColumnsSpanned;
         }
+    }
+
+    private static void ApplyCellBorder(Border border, PdfCellBorder? spec)
+    {
+        if (spec == null) return;
+        border.Style = BorderStyle.Single;
+        border.Width = MdUnit.FromPoint(spec.LineThicknessPt);
+        border.Color = new MdColor(spec.ColorR, spec.ColorG, spec.ColorB);
+        border.Visible = true;
     }
 
     private static int InferColumnCount(PdfTable pdfTable)
