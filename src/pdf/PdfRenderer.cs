@@ -5,41 +5,480 @@ using MigraDoc.DocumentObjectModel.Tables;
 using MigraDoc.Rendering;
 using Symbol = OpenJade.Style.FOTBuilder.Symbol;
 using HF = OpenJade.Style.FOTBuilder.HF;
+using PdfSharp.Drawing;
+using PdfSharp.Fonts;
+using PdfSharp.Pdf;
+using PdfSharp.Pdf.Advanced;
 using MdColor = MigraDoc.DocumentObjectModel.Color;
 using MdUnit = MigraDoc.DocumentObjectModel.Unit;
 
 public class PdfRenderer
 {
+    // Placeholder for non-Arabic page numbers in headers/footers.
+    // Replaced after rendering via XGraphics overlay.
+    private const string PageNumberPlaceholder = "~pn~";
+
+    // Page number format per section (index → DSSSL format string)
+    private List<string> sectionFormats_ = new();
+
+    // Font info for non-Arabic page numbers (captured during HF rendering)
+    private static string hfPageFontFamily_ = "Times New Roman";
+    private static double hfPageFontSize_ = 10;
+    private static bool hfPageFontBold_;
+    private static bool hfPageFontItalic_;
+
     public void Render(List<PdfPageSequence> pageSequences, string outputPath)
     {
-        var doc = BuildDocument(pageSequences);
-        var renderer = new PdfDocumentRenderer();
-        renderer.Document = doc;
-        renderer.RenderDocument();
-        renderer.PdfDocument.Save(outputPath);
+        EnsureFontResolver();
+
+        // Pass 1: render to compute page layout and bookmark positions
+        var doc1 = BuildDocument(pageSequences);
+        var r1 = new PdfDocumentRenderer();
+        r1.Document = doc1;
+        r1.RenderDocument();
+        var resolvedPages = ResolvePageNumbers(r1.PdfDocument);
+
+        // Pass 2: replace PdfNodePageNumber with formatted text, render final PDF
+        RewritePageNumbers(pageSequences, resolvedPages);
+        var doc2 = BuildDocument(pageSequences);
+        var r2 = new PdfDocumentRenderer();
+        r2.Document = doc2;
+        r2.RenderDocument();
+        var sectionPages = ApplyPageLabels(r2.PdfDocument);
+        ReplaceHeaderFooterPageNumbers(r2.PdfDocument, sectionPages);
+        r2.PdfDocument.Save(outputPath);
     }
 
     public void Render(List<PdfPageSequence> pageSequences, Stream stream)
     {
-        var doc = BuildDocument(pageSequences);
-        var renderer = new PdfDocumentRenderer();
-        renderer.Document = doc;
-        renderer.RenderDocument();
-        renderer.PdfDocument.Save(stream, false);
+        EnsureFontResolver();
+
+        var doc1 = BuildDocument(pageSequences);
+        var r1 = new PdfDocumentRenderer();
+        r1.Document = doc1;
+        r1.RenderDocument();
+        var resolvedPages = ResolvePageNumbers(r1.PdfDocument);
+
+        RewritePageNumbers(pageSequences, resolvedPages);
+        var doc2 = BuildDocument(pageSequences);
+        var r2 = new PdfDocumentRenderer();
+        r2.Document = doc2;
+        r2.RenderDocument();
+        var sectionPages = ApplyPageLabels(r2.PdfDocument);
+        ReplaceHeaderFooterPageNumbers(r2.PdfDocument, sectionPages);
+        r2.PdfDocument.Save(stream, false);
+    }
+
+    // Returns ordered list of (sectionIdx, startPage) pairs.
+    private List<(int secIdx, int startPage)> ApplyPageLabels(PdfDocument pdfDoc)
+    {
+        if (sectionFormats_.Count == 0)
+            return new();
+
+        // Section marker bookmarks "__sec_0", "__sec_1", ... were inserted during
+        // document building. Find their page numbers in the PDF named destinations.
+        var pageForSection = new Dictionary<int, int>(); // sectionIdx → 0-based page
+
+        // PdfSharp stores named destinations in /Names → /Dests → /Names array.
+        // Objects may be indirect references, so dereference where needed.
+        var namesObj = pdfDoc.Internals.Catalog.Elements["/Names"];
+        var namesDict = Deref(namesObj) as PdfDictionary;
+        var destsObj = namesDict?.Elements["/Dests"];
+        var destsDict = Deref(destsObj) as PdfDictionary;
+        var namesArrayObj = destsDict?.Elements["/Names"];
+        var namesArray = Deref(namesArrayObj) as PdfArray;
+
+        if (namesArray != null)
+        {
+            for (int i = 0; i + 1 < namesArray.Elements.Count; i += 2)
+            {
+                var nameItem = namesArray.Elements[i] as PdfString;
+                if (nameItem == null) continue;
+                string name = nameItem.Value;
+                if (!name.StartsWith("__sec_")) continue;
+                int secIdx = int.Parse(name.Substring(6));
+
+                // Destination is stored as a PdfLiteral: "[N 0 R /XYZ x y null]"
+                // Extract the object number N to find the page.
+                var dest = namesArray.Elements[i + 1];
+                string destStr = dest?.ToString() ?? "";
+                var match = System.Text.RegularExpressions.Regex.Match(destStr, @"(\d+)\s+\d+\s+R\b");
+                if (match.Success)
+                {
+                    int objNum = int.Parse(match.Groups[1].Value);
+                    for (int p = 0; p < pdfDoc.PageCount; p++)
+                    {
+                        if (pdfDoc.Pages[p].Reference?.ObjectNumber == objNum)
+                        {
+                            pageForSection[secIdx] = p;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: if no bookmarks found, just label all pages with first format
+        if (pageForSection.Count == 0)
+            pageForSection[0] = 0;
+
+        // Only emit a new page label entry when the format changes.
+        // Consecutive sections with the same format continue numbering.
+        var nums = new PdfArray();
+        string prevFormat = null;
+        foreach (var (secIdx, pageIdx) in pageForSection.OrderBy(kv => kv.Value))
+        {
+            var format = secIdx < sectionFormats_.Count
+                ? sectionFormats_[secIdx] : "1";
+
+            if (format == prevFormat)
+                continue; // same format, numbering continues
+
+            var labelDict = new PdfDictionary();
+            labelDict.Elements.Add("/S", new PdfName(DssslFormatToPdfStyle(format)));
+            labelDict.Elements.Add("/St", new PdfInteger(pageIdx + 1)); // 1-based physical page
+
+            nums.Elements.Add(new PdfInteger(pageIdx));
+            nums.Elements.Add(labelDict);
+            prevFormat = format;
+        }
+
+        if (nums.Elements.Count > 0)
+        {
+            var pageLabels = new PdfDictionary();
+            pageLabels.Elements.Add("/Nums", nums);
+            pdfDoc.Internals.Catalog.Elements.Add("/PageLabels", pageLabels);
+        }
+
+        return pageForSection.OrderBy(kv => kv.Value)
+            .Select(kv => (kv.Key, kv.Value)).ToList();
+    }
+
+    /// Replace the placeholder string in PDF content streams with formatted page numbers.
+    private void ReplaceHeaderFooterPageNumbers(PdfDocument pdfDoc,
+        List<(int secIdx, int startPage)> sectionPages)
+    {
+        if (sectionPages.Count == 0) return;
+
+        // Encode the placeholder as it appears in the PDF content stream.
+        // MigraDoc writes Unicode text using a font-specific encoding.
+        // The placeholder chars ◇◇ (U+25C7) are encoded as glyph IDs in the content.
+        // We need to find and replace them in the raw stream bytes.
+        // PdfSharp uses WinAnsiEncoding by default — but ◇ is not in WinAnsi.
+        // So MigraDoc will use a CIDFont with Unicode glyph IDs.
+        // The hex-encoded form of U+25C7 U+25C7 in a CIDFont is <25C725C7>.
+
+        for (int p = 0; p < pdfDoc.PageCount; p++)
+        {
+            // Determine which section this page belongs to and compute formatted number
+            int secIdx = 0;
+            int secStart = 0;
+            for (int s = sectionPages.Count - 1; s >= 0; s--)
+            {
+                if (p >= sectionPages[s].startPage)
+                {
+                    secIdx = sectionPages[s].secIdx;
+                    secStart = sectionPages[s].startPage;
+                    break;
+                }
+            }
+            string format = secIdx < sectionFormats_.Count ? sectionFormats_[secIdx] : "1";
+            if (format == "1") continue; // Arabic pages don't need replacement
+
+            // Physical page number (1-based) — DSSSL counter runs continuously
+            int physicalPage = p + 1;
+            string formatted = FormatPageNumber(physicalPage, format);
+
+            OverlayPageNumber(pdfDoc.Pages[p], formatted);
+        }
+    }
+
+    /// Find the placeholder in the content stream, get its coordinates,
+    /// then draw the formatted page number on top using XGraphics.
+    private static void OverlayPageNumber(PdfPage page, string formatted)
+    {
+        byte[] needle = System.Text.Encoding.ASCII.GetBytes(PageNumberPlaceholder);
+
+        for (int ci = 0; ci < page.Contents.Elements.Count; ci++)
+        {
+            var item = page.Contents.Elements[ci];
+            if (item is PdfReference r) item = r.Value;
+            if (item is not PdfDictionary dict) continue;
+            var stream = dict.Stream;
+            if (stream == null) continue;
+
+            stream.TryUncompress();
+            byte[] data = stream.Value;
+            if (data == null) continue;
+
+            int idx = FindBytes(data, needle);
+            if (idx < 0) continue;
+
+            // Parse the Td coordinates before the placeholder.
+            // Content stream looks like: ... X Y Td\n(~pn~) Tj ...
+            // We need to trace absolute position by walking the text state.
+            string before = System.Text.Encoding.ASCII.GetString(data, 0, idx);
+
+            // Find the font size from the last Tf operator
+            double fontSize = 10;
+            foreach (System.Text.RegularExpressions.Match tfm in
+                System.Text.RegularExpressions.Regex.Matches(before, @"/F\d+\s+([\d.]+)\s+Tf"))
+            {
+                fontSize = double.Parse(tfm.Groups[1].Value,
+                    System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            // Find the last BT...Td chain to get absolute position.
+            // After BT, Td coordinates are cumulative. We need to sum all Td's since last BT.
+            double absX = 0, absY = 0;
+            int lastBt = before.LastIndexOf("BT");
+            if (lastBt >= 0)
+            {
+                string sincebt = before.Substring(lastBt);
+                foreach (System.Text.RegularExpressions.Match tdm in
+                    System.Text.RegularExpressions.Regex.Matches(sincebt,
+                        @"([\d.]+)\s+([\d.]+)\s+Td"))
+                {
+                    absX += double.Parse(tdm.Groups[1].Value,
+                        System.Globalization.CultureInfo.InvariantCulture);
+                    absY += double.Parse(tdm.Groups[2].Value,
+                        System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
+
+            // PDF origin = bottom-left. XGraphics origin = top-left.
+            double pageHeight = page.Height.Point;
+            double gfxY = pageHeight - absY;
+
+            using var gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Append);
+
+            // Build the correct font (captured during HF rendering)
+            var xStyle = XFontStyleEx.Regular;
+            if (hfPageFontBold_ && hfPageFontItalic_) xStyle = XFontStyleEx.BoldItalic;
+            else if (hfPageFontBold_) xStyle = XFontStyleEx.Bold;
+            else if (hfPageFontItalic_) xStyle = XFontStyleEx.Italic;
+            var font = new XFont(hfPageFontFamily_, fontSize, xStyle);
+
+            // Measure placeholder and replacement widths for right-alignment
+            double placeholderWidth = gfx.MeasureString(PageNumberPlaceholder, font).Width;
+            double replacementWidth = gfx.MeasureString(formatted, font).Width;
+
+            // The right edge of the placeholder text = absX + placeholderWidth.
+            // For right-alignment, draw the replacement so its right edge matches.
+            double rightEdge = absX + placeholderWidth;
+            double drawX = rightEdge - replacementWidth;
+
+            // Cover old placeholder with white
+            gfx.DrawRectangle(XBrushes.White, absX - 1, gfxY - fontSize, placeholderWidth + 2, fontSize + 4);
+
+            // Draw the formatted page number
+            gfx.DrawString(formatted, font, XBrushes.Black,
+                drawX, gfxY,
+                new XStringFormat
+                {
+                    Alignment = XStringAlignment.Near,
+                    LineAlignment = XLineAlignment.BaseLine
+                });
+            return;
+        }
+    }
+
+    private static int FindBytes(byte[] haystack, byte[] needle)
+    {
+        for (int i = 0; i <= haystack.Length - needle.Length; i++)
+        {
+            bool match = true;
+            for (int j = 0; j < needle.Length; j++)
+            {
+                if (haystack[i + j] != needle[j]) { match = false; break; }
+            }
+            if (match) return i;
+        }
+        return -1;
+    }
+
+    private static PdfItem Deref(PdfItem item)
+    {
+        while (item is PdfReference r)
+            item = r.Value;
+        return item;
+    }
+
+    private static string DssslFormatToPdfStyle(string format) => format switch
+    {
+        "i" => "/r",  // lowercase roman
+        "I" => "/R",  // uppercase roman
+        "a" => "/a",  // lowercase alpha
+        "A" => "/A",  // uppercase alpha
+        _ => "/D"     // decimal (Arabic)
+    };
+
+    // ==================== Two-pass page number resolution ====================
+
+    /// Extract bookmark→page and section→page mappings from the rendered PDF.
+    /// Returns a map: locationName → formatted page number string.
+    private Dictionary<string, string> ResolvePageNumbers(PdfDocument pdfDoc)
+    {
+        var result = new Dictionary<string, string>();
+        var bookmarkPage = new Dictionary<string, int>();   // bookmark → 0-based page
+        var sectionStart = new Dictionary<int, int>();       // sectionIdx → 0-based page
+
+        // Parse Named Destinations
+        var namesObj = pdfDoc.Internals.Catalog.Elements["/Names"];
+        var namesDict = Deref(namesObj) as PdfDictionary;
+        var destsObj = namesDict?.Elements["/Dests"];
+        var destsDict = Deref(destsObj) as PdfDictionary;
+        var namesArray = Deref(destsDict?.Elements["/Names"]) as PdfArray;
+
+        if (namesArray == null)
+            return result;
+
+        for (int i = 0; i + 1 < namesArray.Elements.Count; i += 2)
+        {
+            var nameItem = namesArray.Elements[i] as PdfString;
+            if (nameItem == null) continue;
+            string name = nameItem.Value;
+
+            var destStr = namesArray.Elements[i + 1]?.ToString() ?? "";
+            var match = System.Text.RegularExpressions.Regex.Match(destStr, @"(\d+)\s+\d+\s+R\b");
+            if (!match.Success) continue;
+
+            int objNum = int.Parse(match.Groups[1].Value);
+            int pageIdx = -1;
+            for (int p = 0; p < pdfDoc.PageCount; p++)
+            {
+                if (pdfDoc.Pages[p].Reference?.ObjectNumber == objNum)
+                {
+                    pageIdx = p;
+                    break;
+                }
+            }
+            if (pageIdx < 0) continue;
+
+            if (name.StartsWith("__sec_"))
+                sectionStart[int.Parse(name.Substring(6))] = pageIdx;
+            else
+                bookmarkPage[name] = pageIdx;
+        }
+
+        // Build ordered section boundaries: [(sectionIdx, startPage, format), ...]
+        var sections = sectionStart.OrderBy(kv => kv.Value).ToList();
+
+        // For each bookmark, find its section and compute formatted page number
+        foreach (var (bm, pageIdx) in bookmarkPage)
+        {
+            int secIdx = 0;
+            int secStart = 0;
+            for (int s = sections.Count - 1; s >= 0; s--)
+            {
+                if (pageIdx >= sections[s].Value)
+                {
+                    secIdx = sections[s].Key;
+                    secStart = sections[s].Value;
+                    break;
+                }
+            }
+            // Physical page number (1-based) — DSSSL counter runs continuously
+            int physicalPage = pageIdx + 1;
+            string format = secIdx < sectionFormats_.Count ? sectionFormats_[secIdx] : "1";
+            result[bm] = FormatPageNumber(physicalPage, format);
+        }
+
+        return result;
+    }
+
+    /// Walk the PdfNode tree and replace PdfNodePageNumber with PdfTextRun.
+    private static void RewritePageNumbers(List<PdfPageSequence> pageSequences,
+        Dictionary<string, string> resolvedPages)
+    {
+        if (resolvedPages.Count == 0) return;
+        foreach (var ps in pageSequences)
+            RewriteInChildren(ps.Children, resolvedPages);
+    }
+
+    private static void RewriteInChildren(List<PdfNode> children,
+        Dictionary<string, string> resolvedPages)
+    {
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i] is PdfNodePageNumber npn
+                && resolvedPages.TryGetValue(npn.LocationName, out var formatted))
+            {
+                children[i] = new PdfTextRun(formatted, npn.Characteristics);
+            }
+            else if (children[i] is PdfContainerNode container)
+            {
+                RewriteInChildren(container.Children, resolvedPages);
+            }
+        }
+    }
+
+    private static string FormatPageNumber(int number, string format) => format switch
+    {
+        "i" => ToRoman(number).ToLower(),
+        "I" => ToRoman(number),
+        "a" => ToAlpha(number).ToLower(),
+        "A" => ToAlpha(number),
+        _ => number.ToString()
+    };
+
+    private static string ToRoman(int number)
+    {
+        if (number <= 0) return number.ToString();
+        var sb = new System.Text.StringBuilder();
+        var values = new[] { 1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1 };
+        var symbols = new[] { "M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I" };
+        for (int i = 0; i < values.Length; i++)
+            while (number >= values[i])
+            {
+                sb.Append(symbols[i]);
+                number -= values[i];
+            }
+        return sb.ToString();
+    }
+
+    private static string ToAlpha(int number)
+    {
+        if (number <= 0) return number.ToString();
+        var sb = new System.Text.StringBuilder();
+        while (number > 0)
+        {
+            number--;
+            sb.Insert(0, (char)('A' + number % 26));
+            number /= 26;
+        }
+        return sb.ToString();
+    }
+
+    private static bool fontResolverSet_;
+
+    private static void EnsureFontResolver()
+    {
+        if (fontResolverSet_)
+            return;
+        if (GlobalFontSettings.FontResolver == null)
+            GlobalFontSettings.FontResolver = new MacFontResolver();
+        fontResolverSet_ = true;
     }
 
     private Document BuildDocument(List<PdfPageSequence> pageSequences)
     {
+        sectionFormats_.Clear();
         var doc = new Document();
         var nonEmpty = pageSequences.Where(ps => ps.Children.Count > 0).ToList();
+        int sectionIdx = 0;
         foreach (var ps in nonEmpty)
-            RenderPageSequence(doc, ps);
+        {
+            sectionFormats_.Add(ps.Characteristics.PageNumberFormat);
+            RenderPageSequence(doc, ps, sectionIdx);
+            sectionIdx++;
+        }
         return doc;
     }
 
     // ==================== Page Sequence → Section ====================
 
-    private void RenderPageSequence(Document doc, PdfPageSequence pageSequence)
+    private void RenderPageSequence(Document doc, PdfPageSequence pageSequence, int sectionIdx)
     {
         var chars = pageSequence.Characteristics;
         var section = doc.AddSection();
@@ -51,6 +490,17 @@ public class PdfRenderer
         section.PageSetup.TopMargin = MdUnit.FromPoint(chars.TopMarginPt);
         section.PageSetup.BottomMargin = MdUnit.FromPoint(chars.BottomMarginPt);
         section.PageSetup.DifferentFirstPageHeaderFooter = true;
+
+        // Don't set StartingNumber — DSSSL page counter continues across sections.
+        // MigraDoc continues numbering from the previous section by default.
+
+        // Section marker bookmark for page label assignment
+        var marker = section.AddParagraph();
+        marker.Format.SpaceBefore = 0;
+        marker.Format.SpaceAfter = 0;
+        marker.Format.Font.Size = 1;
+        marker.Format.LineSpacing = MdUnit.FromPoint(0);
+        marker.AddBookmark($"__sec_{sectionIdx}");
 
         var format = chars.PageNumberFormat;
 
@@ -135,7 +585,17 @@ public class PdfRenderer
                     ApplyFont(ft.Font, run.Characteristics);
                     break;
                 case PdfPageNumber pn:
-                    para.AddPageField();
+                    if (format != "1")
+                    {
+                        var pft = para.AddFormattedText(PageNumberPlaceholder);
+                        ApplyFont(pft.Font, pn.Characteristics);
+                        hfPageFontFamily_ = pn.Characteristics.FontFamily;
+                        hfPageFontSize_ = pn.Characteristics.FontSizePt;
+                        hfPageFontBold_ = pn.Characteristics.IsBold;
+                        hfPageFontItalic_ = pn.Characteristics.IsItalic;
+                    }
+                    else
+                        para.AddPageField();
                     break;
                 case PdfSequence seq:
                     RenderHFInline(para, seq.Children, format);
@@ -375,9 +835,7 @@ public class PdfRenderer
                 para.AddPageField();
                 break;
             case SegmentKind.NodePageNumber:
-                // MigraDoc doesn't have cross-reference page numbers.
-                // Add a bookmark reference placeholder.
-                para.AddText("?");
+                para.AddPageRefField(seg.LocationName!);
                 break;
             case SegmentKind.ExternalGraphic when seg.Graphic != null:
                 var path = ResolveImagePath(seg.Graphic.SystemId);
@@ -396,12 +854,28 @@ public class PdfRenderer
         table.Borders.Color = Colors.Black;
 
         // Column definitions
-        foreach (var col in pdfTable.Columns)
+        if (pdfTable.Columns.Count > 0)
         {
-            if (col.HasWidth && col.Width > 0)
-                table.AddColumn(MdUnit.FromPoint(col.WidthPt));
-            else
-                table.AddColumn();
+            foreach (var col in pdfTable.Columns)
+            {
+                if (col.HasWidth && col.Width > 0)
+                    table.AddColumn(MdUnit.FromPoint(col.WidthPt));
+                else
+                    table.AddColumn();
+            }
+        }
+        else
+        {
+            // No explicit table-column FOs (e.g. simplelist with %simplelist-column-width% #f).
+            // Infer column count from cells and distribute page width equally.
+            int colCount = InferColumnCount(pdfTable);
+            if (colCount == 0)
+                return;
+            var pageWidth = section.PageSetup.PageWidth - section.PageSetup.LeftMargin
+                - section.PageSetup.RightMargin;
+            var colWidth = pageWidth / colCount;
+            for (int i = 0; i < colCount; i++)
+                table.AddColumn(colWidth);
         }
 
         // Header rows
@@ -474,6 +948,20 @@ public class PdfRenderer
 
             colIdx += (int)pdfCell.NColumnsSpanned;
         }
+    }
+
+    private static int InferColumnCount(PdfTable pdfTable)
+    {
+        int max = 0;
+        foreach (var row in pdfTable.HeaderRows.Concat(pdfTable.BodyRows).Concat(pdfTable.FooterRows))
+        {
+            int cols = 0;
+            foreach (var child in row.Children)
+                if (child is PdfTableCell cell)
+                    cols += (int)cell.NColumnsSpanned;
+            if (cols > max) max = cols;
+        }
+        return max;
     }
 
     // ==================== Rule ====================
