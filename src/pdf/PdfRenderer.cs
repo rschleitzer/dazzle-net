@@ -889,9 +889,26 @@ public class PdfRenderer
 
     private void RenderTable(Section section, PdfTable pdfTable)
     {
+        // Apply display spacing via a spacer paragraph (MigraDoc tables have no SpaceBefore)
+        var tChars = pdfTable.Characteristics;
+        float tSpaceBefore = tChars.SpaceBeforePt;
+        float tCollapsed = Math.Max(tSpaceBefore, prevSpaceAfterPt_);
+        if (tCollapsed > 0)
+        {
+            var spacer = section.AddParagraph();
+            spacer.Format.SpaceBefore = 0;
+            spacer.Format.SpaceAfter = MdUnit.FromPoint(tCollapsed);
+            spacer.Format.Font.Size = 1;
+            spacer.Format.LineSpacing = MdUnit.FromPoint(0);
+        }
+        prevSpaceAfterPt_ = tChars.SpaceAfterPt;
+
         var table = section.AddTable();
-        table.Borders.Width = 0.5;
-        table.Borders.Color = Colors.Black;
+        table.Borders.Visible = false;
+
+        // Table indentation
+        if (tChars.StartIndent > 0)
+            table.Rows.LeftIndent = MdUnit.FromPoint(tChars.StartIndentPt);
 
         // Column definitions
         if (pdfTable.Columns.Count > 0)
@@ -1104,7 +1121,10 @@ public class PdfRenderer
             para.Format.FirstLineIndent = MdUnit.FromPoint(chars.FirstLineStartIndentPt);
 
         if (chars.LineSpacing > 0 && chars.FontSize > 0)
+        {
+            para.Format.LineSpacingRule = LineSpacingRule.AtLeast;
             para.Format.LineSpacing = MdUnit.FromPoint(chars.LineSpacingPt);
+        }
 
         if (chars.Quadding == Symbol.symbolCenter)
             para.Format.Alignment = ParagraphAlignment.Center;
