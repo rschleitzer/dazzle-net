@@ -826,14 +826,22 @@ public class PdfRenderer
             case SegmentKind.Text:
                 if (seg.Chars.PositionPointShift > 0)
                 {
+                    // DSSSL already reduced font-size and set position-point-shift.
+                    // MigraDoc's Superscript further shrinks the font (~58%), causing
+                    // double reduction. Compensate by scaling the font size up so that
+                    // after MigraDoc's shrink the result matches the DSSSL size.
                     var sup = para.AddFormattedText(seg.Text!);
-                    ApplyFont(sup.Font, seg.Chars);
+                    var compensated = seg.Chars.Clone();
+                    compensated.FontSize = (long)(seg.Chars.FontSize / 0.58);
+                    ApplyFont(sup.Font, compensated);
                     sup.Superscript = true;
                 }
                 else if (seg.Chars.PositionPointShift < 0)
                 {
                     var sub = para.AddFormattedText(seg.Text!);
-                    ApplyFont(sub.Font, seg.Chars);
+                    var compensated = seg.Chars.Clone();
+                    compensated.FontSize = (long)(seg.Chars.FontSize / 0.58);
+                    ApplyFont(sub.Font, compensated);
                     sub.Subscript = true;
                 }
                 else
