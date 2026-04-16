@@ -22,6 +22,9 @@ public class PdfRenderer
     private List<string> sectionFormats_ = new();
 
     // Font info for non-Arabic page numbers (captured during HF rendering)
+    // Available content width for the current section (for image sizing)
+    private static MdUnit availableWidth_;
+
     private static string hfPageFontFamily_ = "Times New Roman";
     private static double hfPageFontSize_ = 10;
     private static bool hfPageFontBold_;
@@ -490,6 +493,8 @@ public class PdfRenderer
         section.PageSetup.TopMargin = MdUnit.FromPoint(chars.TopMarginPt);
         section.PageSetup.BottomMargin = MdUnit.FromPoint(chars.BottomMarginPt);
         section.PageSetup.DifferentFirstPageHeaderFooter = true;
+        availableWidth_ = section.PageSetup.PageWidth - section.PageSetup.LeftMargin
+            - section.PageSetup.RightMargin;
 
         // Don't set StartingNumber — DSSSL page counter continues across sections.
         // MigraDoc continues numbering from the previous section by default.
@@ -517,6 +522,7 @@ public class PdfRenderer
             (int)(HF.otherHF | HF.frontHF | HF.footerHF), format);
 
         // Content
+        prevSpaceAfterPt_ = 0;
         RenderChildren(section, pageSequence.Children);
     }
 
@@ -628,8 +634,11 @@ public class PdfRenderer
 
     private void RenderChildrenToCell(Cell cell, List<PdfNode> children)
     {
+        float saved = prevSpaceAfterPt_;
+        prevSpaceAfterPt_ = 0;
         foreach (var child in children)
             RenderNodeToContainer(cell, child);
+        prevSpaceAfterPt_ = saved;
     }
 
     private void RenderNode(Section section, PdfNode node)
@@ -643,7 +652,10 @@ public class PdfRenderer
                 RenderParagraph(section, para);
                 break;
             case PdfDisplayGroup group:
+                CollapseDisplaySpace(group.Characteristics);
                 RenderChildren(section, group.Children);
+                // Collapse group's SpaceAfter with last child's SpaceAfter
+                prevSpaceAfterPt_ = Math.Max(group.Characteristics.SpaceAfterPt, prevSpaceAfterPt_);
                 break;
             case PdfScroll scroll:
                 RenderChildren(section, scroll.Children);
@@ -680,7 +692,9 @@ public class PdfRenderer
                 RenderParagraphToCell(cell, para);
                 break;
             case PdfDisplayGroup group:
+                CollapseDisplaySpace(group.Characteristics);
                 RenderChildrenToCell(cell, group.Children);
+                prevSpaceAfterPt_ = Math.Max(group.Characteristics.SpaceAfterPt, prevSpaceAfterPt_);
                 break;
             case PdfScroll scroll:
                 RenderChildrenToCell(cell, scroll.Children);
@@ -705,6 +719,18 @@ public class PdfRenderer
     {
         var chars = para.Characteristics;
         var segments = FlattenInline(para.Children);
+
+        // Empty paragraphs (no visible text): don't emit a MigraDoc paragraph,
+        // just let their spacing participate in collapsing.
+        if (segments.All(s => s.Kind == SegmentKind.Text && string.IsNullOrWhiteSpace(s.Text)))
+        {
+            float spaceBefore = chars.SpaceBeforePt;
+            prevSpaceAfterPt_ = Math.Max(
+                Math.Max(spaceBefore, prevSpaceAfterPt_),
+                chars.SpaceAfterPt);
+            return;
+        }
+
         int leaderIdx = segments.FindIndex(s => s.Kind == SegmentKind.Leader);
 
         if (leaderIdx >= 0)
@@ -838,9 +864,23 @@ public class PdfRenderer
                 para.AddPageRefField(seg.LocationName!);
                 break;
             case SegmentKind.ExternalGraphic when seg.Graphic != null:
-                var path = ResolveImagePath(seg.Graphic.SystemId);
-                if (File.Exists(path))
-                    para.AddImage(path);
+                var imgPath = ResolveImagePath(seg.Graphic.SystemId);
+                if (File.Exists(imgPath))
+                {
+                    var img = para.AddImage(imgPath);
+                    img.LockAspectRatio = true;
+                    if (seg.Graphic.HasMaxWidth)
+                    {
+                        var maxW = MdUnit.FromPoint(PdfCharacteristics.ToPoints(seg.Graphic.MaxWidth));
+                        img.Width = maxW < availableWidth_ ? maxW : availableWidth_;
+                    }
+                    else
+                    {
+                        img.Width = availableWidth_;
+                    }
+                    if (seg.Graphic.HasMaxHeight)
+                        img.Height = MdUnit.FromPoint(PdfCharacteristics.ToPoints(seg.Graphic.MaxHeight));
+                }
                 break;
         }
     }
@@ -997,8 +1037,20 @@ public class PdfRenderer
         if (!File.Exists(path)) return;
 
         var image = section.AddImage(path);
+        // Constrain to the available content width so images don't overflow
+        var available = section.PageSetup.PageWidth - section.PageSetup.LeftMargin
+            - section.PageSetup.RightMargin;
+
         if (graphic.HasMaxWidth)
-            image.Width = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxWidth));
+        {
+            var maxW = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxWidth));
+            image.Width = maxW < available ? maxW : available;
+        }
+        else
+        {
+            image.LockAspectRatio = true;
+            image.Width = available;
+        }
         if (graphic.HasMaxHeight)
             image.Height = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxHeight));
     }
@@ -1018,14 +1070,31 @@ public class PdfRenderer
 
     // ==================== Formatting helpers ====================
 
-    private static void ApplyParagraphFormat(Paragraph para, PdfCharacteristics chars)
+    /// Collapse a display-group's SpaceBefore with the previous element's SpaceAfter.
+    /// Updates prevSpaceAfterPt_ and resets it for the group's children.
+    private void CollapseDisplaySpace(PdfCharacteristics chars)
+    {
+        float spaceBefore = chars.SpaceBeforePt;
+        float collapsed = Math.Max(spaceBefore, prevSpaceAfterPt_);
+        // The collapsed space is now "consumed" — children start fresh
+        prevSpaceAfterPt_ = collapsed;
+    }
+
+    // DSSSL display-space collapsing: the gap between two adjacent block elements
+    // is max(space-after of first, space-before of second), not the sum.
+    // MigraDoc adds them, so we only emit SpaceBefore (collapsed) and skip SpaceAfter.
+    private float prevSpaceAfterPt_;
+
+    private void ApplyParagraphFormat(Paragraph para, PdfCharacteristics chars)
     {
         ApplyFont(para.Format.Font, chars);
 
-        if (chars.SpaceBefore > 0)
-            para.Format.SpaceBefore = MdUnit.FromPoint(chars.SpaceBeforePt);
-        if (chars.SpaceAfter > 0)
-            para.Format.SpaceAfter = MdUnit.FromPoint(chars.SpaceAfterPt);
+        float spaceBefore = chars.SpaceBeforePt;
+        float collapsed = Math.Max(spaceBefore, prevSpaceAfterPt_);
+        if (collapsed > 0)
+            para.Format.SpaceBefore = MdUnit.FromPoint(collapsed);
+        // Don't set SpaceAfter — it's consumed by the next element's collapsing.
+        prevSpaceAfterPt_ = chars.SpaceAfterPt;
 
         if (chars.StartIndent > 0)
             para.Format.LeftIndent = MdUnit.FromPoint(chars.StartIndentPt);
