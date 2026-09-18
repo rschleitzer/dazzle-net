@@ -21,7 +21,7 @@
 
   <ItemGroup>
     <PackageReference Include="OpenSP" Version="*" />
-    <PackageReference Include="OpenJade" Version="*" />
+    <PackageReference Include="OpenJade" Version="1.3.5" />
   </ItemGroup>
 
 </Project>
