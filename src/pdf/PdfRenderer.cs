@@ -980,13 +980,27 @@ public class PdfRenderer
         if (tChars.StartIndent > 0)
             table.Rows.LeftIndent = MdUnit.FromPoint(tChars.StartIndentPt);
 
-        // Column definitions
+        // Column definitions. A column width is a length plus a number of table units (DSSSL
+        // table-unit, CALS colwidth "3*"). The lengths are taken first; the width left over is
+        // shared among the columns in proportion to their table units. A column without any
+        // width counts as one table unit. A table whose columns all carry plain lengths is laid
+        // out exactly as before.
         if (pdfTable.Columns.Count > 0)
         {
+            var availablePt = (section.PageSetup.PageWidth - section.PageSetup.LeftMargin
+                - section.PageSetup.RightMargin).Point - tChars.StartIndentPt;
+            double fixedPt = 0, units = 0;
             foreach (var col in pdfTable.Columns)
             {
-                if (col.HasWidth && col.Width > 0)
-                    table.AddColumn(MdUnit.FromPoint(col.WidthPt));
+                if (col.HasWidth && col.Width > 0) fixedPt += col.WidthPt;
+                units += ColumnUnits(col);
+            }
+            var perUnitPt = units > 0 ? Math.Max(0, availablePt - fixedPt) / units : 0;
+            foreach (var col in pdfTable.Columns)
+            {
+                var widthPt = (col.HasWidth && col.Width > 0 ? col.WidthPt : 0) + ColumnUnits(col) * perUnitPt;
+                if (widthPt > 0)
+                    table.AddColumn(MdUnit.FromPoint(widthPt));
                 else
                     table.AddColumn();
             }
@@ -1090,6 +1104,14 @@ public class PdfRenderer
         border.Width = MdUnit.FromPoint(spec.LineThicknessPt);
         border.Color = new MdColor(spec.ColorR, spec.ColorG, spec.ColorB);
         border.Visible = true;
+    }
+
+    // Table units of a column: its proportional part, or one unit for a column that states no
+    // width at all. A column with only a length has none.
+    private static double ColumnUnits(PdfTableColumn col)
+    {
+        if (!col.HasWidth) return 1;
+        return col.TableUnitFactor > 0 ? col.TableUnitFactor : 0;
     }
 
     private static int InferColumnCount(PdfTable pdfTable)
