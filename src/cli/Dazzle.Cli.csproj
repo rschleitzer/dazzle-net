@@ -10,8 +10,6 @@
     <LangVersion>preview</LangVersion>
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <!-- sgml/* comes from this project and, identically, from Dazzle.Pdf -->
-    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
 
     <!-- .NET Tool Package -->
     <PackAsTool>true</PackAsTool>
@@ -31,11 +29,6 @@
     <ProjectReference Include="..\pdf\Dazzle.Pdf.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Content Include="sgml\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <PackageCopyToOutput>true</PackageCopyToOutput>
-    </Content>
-  </ItemGroup>
+  <!-- The sgml catalog and DTDs beside the executable come from Dazzle.Pdf. -->
 
 </Project>
