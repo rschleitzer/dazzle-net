@@ -10,12 +10,14 @@
     <LangVersion>preview</LangVersion>
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- sgml/* comes from this project and, identically, from Dazzle.Pdf -->
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
 
     <!-- .NET Tool Package -->
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dazzle</ToolCommandName>
     <PackageId>Dazzle.Cli</PackageId>
-    <Version>0.1.2</Version>
+    <Version>0.1.3</Version>
     <Authors>Ralf Schleitzer</Authors>
     <Description>A tool for processing DSSSL stylesheets using the OpenJade style engine</Description>
     <PackageTags>sgml;dsssl;openjade;cli</PackageTags>
