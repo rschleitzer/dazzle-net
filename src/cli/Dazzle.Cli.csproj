@@ -20,6 +20,7 @@
     <Description>A tool for processing DSSSL stylesheets using the OpenJade style engine</Description>
     <PackageTags>sgml;dsssl;openjade;cli</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/rschleitzer/dazzle-net</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
@@ -30,5 +31,9 @@
   </ItemGroup>
 
   <!-- The sgml catalog and DTDs beside the executable come from Dazzle.Pdf. -->
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
 </Project>
