@@ -1,0 +1,67 @@
+# Publishes Dazzle, Dazzle.Pdf and Dazzle.Cli to nuget.org -- no API key
+# anywhere: nuget.org trusts THIS workflow file in THIS repository (Trusted
+# Publishing) and hands the run a key that lives one hour.
+#
+# To publish a new version: raise <Version> in the project file, commit, push.
+# That is all. A version nuget.org already has is skipped.
+#
+#   gh workflow run publish                  # the same by hand
+#   gh workflow run publish -f dry_run=true  # pack only, publish nothing
+#
+# The OpenJade version the projects name must be ON nuget.org first (the
+# publish workflow of openjade-net, and a few minutes for the index): until
+# then the restore here fails -- run it again.
+#
+# Set up once on nuget.org (your name, top right -> Trusted Publishing):
+#   Repository Owner: rschleitzer   Repository: dazzle-net
+#   Workflow File: publish.yml      Environment: (empty)
+name: publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/lib/Dazzle.Lib.csproj
+      - src/pdf/Dazzle.Pdf.csproj
+      - src/cli/Dazzle.Cli.csproj
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: pack only, publish nothing
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write   # the OIDC token nuget.org exchanges for the key
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pack
+        run: |
+          dotnet pack src/lib/Dazzle.Lib.csproj -c Release -o nupkg
+          dotnet pack src/pdf/Dazzle.Pdf.csproj -c Release -o nupkg
+          dotnet pack src/cli/Dazzle.Cli.csproj -c Release -o nupkg
+          ls -l nupkg
+
+      - name: NuGet login (OIDC -> key for one hour)
+        if: ${{ !inputs.dry_run }}
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: rschleitzer
+
+      - name: Push what nuget.org does not have yet
+        if: ${{ !inputs.dry_run }}
+        run: >
+          dotnet nuget push "nupkg/*.nupkg" --skip-duplicate
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
