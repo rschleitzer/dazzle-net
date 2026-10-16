@@ -500,11 +500,7 @@ public class PdfRenderer
         // MigraDoc continues numbering from the previous section by default.
 
         // Section marker bookmark for page label assignment
-        var marker = section.AddParagraph();
-        marker.Format.SpaceBefore = 0;
-        marker.Format.SpaceAfter = 0;
-        marker.Format.Font.Size = 1;
-        marker.Format.LineSpacing = MdUnit.FromPoint(0);
+        var marker = AddMarkParagraph(section);
         marker.AddBookmark($"__sec_{sectionIdx}");
 
         var format = chars.PageNumberFormat;
@@ -523,7 +519,76 @@ public class PdfRenderer
 
         // Content
         prevSpaceAfterPt_ = 0;
+        pendingMarks_.Clear();
         RenderChildren(section, pageSequence.Children);
+        FlushPendingMarksAtEnd(section);
+    }
+
+    // ==================== Location marks ====================
+
+    // A location mark of a block-level element has no height of its own: it waits for the next
+    // paragraph and becomes a bookmark at its start. Marks at the end of a section go to the last
+    // paragraph, or to a paragraph without height when there is none.
+    private readonly List<string> pendingMarks_ = new();
+
+    private Paragraph AddParagraph(Section section)
+    {
+        var para = section.AddParagraph();
+        foreach (var name in pendingMarks_)
+            para.AddBookmark(name, prepend: false);
+        pendingMarks_.Clear();
+        return para;
+    }
+
+    // A paragraph of no height: one line of exactly zero points
+    private static Paragraph AddMarkParagraph(Section section)
+    {
+        var para = section.AddParagraph();
+        SetNoHeight(para);
+        return para;
+    }
+
+    private static void SetNoHeight(Paragraph para)
+    {
+        para.Format.SpaceBefore = 0;
+        para.Format.SpaceAfter = 0;
+        para.Format.Font.Size = 1;
+        para.Format.LineSpacingRule = LineSpacingRule.Exactly;
+        para.Format.LineSpacing = MdUnit.FromPoint(0);
+    }
+
+    private static void InsertBookmarks(Paragraph para, List<string> names)
+    {
+        for (int i = names.Count - 1; i >= 0; i--)
+            para.Elements.InsertObject(0, new MigraDoc.DocumentObjectModel.Fields.BookmarkField(names[i]));
+        names.Clear();
+    }
+
+    private void FlushPendingMarksAtEnd(Section section)
+    {
+        if (pendingMarks_.Count == 0) return;
+        var last = section.Elements.Count > 0 ? section.Elements[section.Elements.Count - 1] : null;
+        Paragraph? target = last as Paragraph;
+        if (last is Table table && table.Rows.Count > 0)
+            target = LastParagraphOf(table.Rows[table.Rows.Count - 1].Cells[0]);
+        target ??= AddMarkParagraph(section);
+        foreach (var name in pendingMarks_)
+            target.AddBookmark(name, prepend: false);
+        pendingMarks_.Clear();
+    }
+
+    private static Paragraph? FirstParagraphOf(Cell cell)
+    {
+        foreach (var obj in cell.Elements)
+            if (obj is Paragraph p) return p;
+        return null;
+    }
+
+    private static Paragraph? LastParagraphOf(Cell cell)
+    {
+        for (int i = cell.Elements.Count - 1; i >= 0; i--)
+            if (cell.Elements[i] is Paragraph p) return p;
+        return null;
     }
 
     // ==================== Header/Footer ====================
@@ -727,24 +792,33 @@ public class PdfRenderer
                 RenderChildren(section, seq.Children);
                 break;
             case PdfTextRun run:
-                var p = section.AddParagraph();
+                var p = AddParagraph(section);
                 var ft = p.AddFormattedText(run.Text);
                 ApplyFont(ft.Font, run.Characteristics);
                 break;
             case PdfRule rule:
-                RenderRule(section, rule);
+                if (rule.Orientation == Symbol.symbolHorizontal)
+                    RenderRule(AddParagraph(section), rule);
                 break;
             case PdfExternalGraphic graphic:
                 RenderExternalGraphic(section, graphic);
                 break;
             case PdfLocationMark loc:
-                var bm = section.AddParagraph();
-                bm.Format.SpaceBefore = 0;
-                bm.Format.SpaceAfter = 0;
-                bm.Format.Font.Size = 1;
-                bm.AddBookmark(loc.LocationName);
+                pendingMarks_.Add(loc.LocationName);
                 break;
         }
+    }
+
+    // Marks inside a cell wait for the next paragraph of the cell
+    private readonly List<string> pendingCellMarks_ = new();
+
+    private Paragraph AddParagraph(Cell cell)
+    {
+        var para = cell.AddParagraph();
+        foreach (var name in pendingCellMarks_)
+            para.AddBookmark(name, prepend: false);
+        pendingCellMarks_.Clear();
+        return para;
     }
 
     private void RenderNodeToContainer(Cell cell, PdfNode node)
@@ -766,12 +840,22 @@ public class PdfRenderer
                 RenderChildrenToCell(cell, seq.Children);
                 break;
             case PdfTextRun run:
-                var p = cell.AddParagraph();
+                var p = AddParagraph(cell);
                 var ft = p.AddFormattedText(run.Text);
                 ApplyFont(ft.Font, run.Characteristics);
                 break;
             case PdfExternalGraphic graphic:
-                RenderExternalGraphicToCell(cell, graphic);
+                RenderExternalGraphicToCell(AddParagraph(cell), graphic);
+                break;
+            case PdfLocationMark loc:
+                pendingCellMarks_.Add(loc.LocationName);
+                break;
+            case PdfTable nested:
+                // MigraDoc cannot put a table into a cell (the RTF backend of Jade reports it as a
+                // nested table). Rather than losing the content, its cells follow one another.
+                foreach (var row in nested.HeaderRows.Concat(nested.BodyRows).Concat(nested.FooterRows))
+                    foreach (var c in row.Children.OfType<PdfTableCell>())
+                        RenderChildrenToCell(cell, c.Children);
                 break;
         }
     }
@@ -781,12 +865,15 @@ public class PdfRenderer
     private void RenderParagraph(Section section, PdfParagraph para)
     {
         var chars = para.Characteristics;
-        var segments = FlattenInline(para.Children);
+        var segments = FlattenInline(para.Children, withMarks: true);
 
         // Empty paragraphs (no visible text): don't emit a MigraDoc paragraph,
-        // just let their spacing participate in collapsing.
-        if (segments.All(s => s.Kind == SegmentKind.Text && string.IsNullOrWhiteSpace(s.Text)))
+        // just let their spacing participate in collapsing. Preserved whitespace is content.
+        if (IsEmpty(segments))
         {
+            foreach (var s in segments)
+                if (s.Kind == SegmentKind.Bookmark)
+                    pendingMarks_.Add(s.LocationName!);
             float spaceBefore = chars.SpaceBeforePt;
             prevSpaceAfterPt_ = Math.Max(
                 Math.Max(spaceBefore, prevSpaceAfterPt_),
@@ -796,35 +883,45 @@ public class PdfRenderer
 
         int leaderIdx = segments.FindIndex(s => s.Kind == SegmentKind.Leader);
 
+        var mdPara = AddParagraph(section);
+        ApplyParagraphFormat(mdPara, chars);
         if (leaderIdx >= 0)
         {
-            RenderLeaderParagraph(section, chars, segments, leaderIdx);
+            var width = section.PageSetup.PageWidth - section.PageSetup.LeftMargin
+                - section.PageSetup.RightMargin;
+            RenderLeaderParagraph(mdPara, width, segments, leaderIdx);
             return;
         }
-
-        var mdPara = section.AddParagraph();
-        ApplyParagraphFormat(mdPara, chars);
         RenderSegments(mdPara, segments);
     }
+
+    private static bool IsEmpty(List<InlineSegment> segments) =>
+        segments.All(s => s.Kind == SegmentKind.Bookmark
+            || s.Kind == SegmentKind.Text && string.IsNullOrWhiteSpace(s.Text)
+               && !(s.Chars.InputWhitespaceTreatment == Symbol.symbolPreserve && s.Text!.Length > 0));
+
+    // Width of the content of the cell being rendered (for a leader in a cell)
+    private MdUnit cellContentWidth_;
 
     private void RenderParagraphToCell(Cell cell, PdfParagraph para)
     {
         var chars = para.Characteristics;
-        var segments = FlattenInline(para.Children);
-        var mdPara = cell.AddParagraph();
+        var segments = FlattenInline(para.Children, withMarks: true);
+        var mdPara = AddParagraph(cell);
         ApplyParagraphFormat(mdPara, chars);
+        int leaderIdx = segments.FindIndex(s => s.Kind == SegmentKind.Leader);
+        if (leaderIdx >= 0)
+        {
+            RenderLeaderParagraph(mdPara, cellContentWidth_, segments, leaderIdx);
+            return;
+        }
         RenderSegments(mdPara, segments);
     }
 
-    private void RenderLeaderParagraph(Section section, PdfCharacteristics chars,
+    private static void RenderLeaderParagraph(Paragraph mdPara, MdUnit pageWidth,
         List<InlineSegment> segments, int leaderIdx)
     {
-        var mdPara = section.AddParagraph();
-        ApplyParagraphFormat(mdPara, chars);
-
         // Right-aligned tab stop with dot leader
-        var pageWidth = section.PageSetup.PageWidth - section.PageSetup.LeftMargin
-            - section.PageSetup.RightMargin;
         char dot = '.';
         if (segments[leaderIdx].Text != null && segments[leaderIdx].Text!.Length > 0)
             dot = segments[leaderIdx].Text![0];
@@ -844,23 +941,29 @@ public class PdfRenderer
 
     // ==================== Inline segments ====================
 
-    private enum SegmentKind { Text, PageNumber, NodePageNumber, Leader, ExternalGraphic }
+    private enum SegmentKind { Text, PageNumber, NodePageNumber, Leader, ExternalGraphic, Bookmark }
     private record InlineSegment(SegmentKind Kind, string? Text, string? LocationName,
         PdfCharacteristics Chars, PdfExternalGraphic? Graphic = null);
 
-    private static List<InlineSegment> FlattenInline(List<PdfNode> children)
+    // withMarks: location marks of inline elements become bookmarks where they stand (not in
+    // headers and footers, which MigraDoc repeats)
+    private static List<InlineSegment> FlattenInline(List<PdfNode> children, bool withMarks = false)
     {
         var result = new List<InlineSegment>();
-        FlattenInlineRecursive(children, result);
+        FlattenInlineRecursive(children, result, withMarks);
         return result;
     }
 
-    private static void FlattenInlineRecursive(List<PdfNode> children, List<InlineSegment> result)
+    private static void FlattenInlineRecursive(List<PdfNode> children, List<InlineSegment> result,
+        bool withMarks)
     {
         foreach (var child in children)
         {
             switch (child)
             {
+                case PdfLocationMark mark when withMarks:
+                    result.Add(new(SegmentKind.Bookmark, null, mark.LocationName, mark.Characteristics));
+                    break;
                 case PdfTextRun run:
                     result.Add(new(SegmentKind.Text, run.Text, null, run.Characteristics));
                     break;
@@ -878,10 +981,10 @@ public class PdfRenderer
                     result.Add(new(SegmentKind.Leader, dot, null, leader.Characteristics));
                     break;
                 case PdfSequence seq:
-                    FlattenInlineRecursive(seq.Children, result);
+                    FlattenInlineRecursive(seq.Children, result, withMarks);
                     break;
                 case PdfParagraph nestedPara:
-                    FlattenInlineRecursive(nestedPara.Children, result);
+                    FlattenInlineRecursive(nestedPara.Children, result, withMarks);
                     break;
                 case PdfExternalGraphic graphic:
                     result.Add(new(SegmentKind.ExternalGraphic, null, null,
@@ -927,6 +1030,9 @@ public class PdfRenderer
                     AddTextWithLineBreaks(para, seg.Text!, seg.Chars);
                 }
                 break;
+            case SegmentKind.Bookmark:
+                para.AddBookmark(seg.LocationName!, prepend: false);
+                break;
             case SegmentKind.PageNumber:
                 para.AddPageField();
                 break;
@@ -965,19 +1071,24 @@ public class PdfRenderer
         float tCollapsed = Math.Max(tSpaceBefore, prevSpaceAfterPt_);
         if (tCollapsed > 0)
         {
-            var spacer = section.AddParagraph();
-            spacer.Format.SpaceBefore = 0;
+            // The spacer has no height of its own, only the space
+            var spacer = AddMarkParagraph(section);
             spacer.Format.SpaceAfter = MdUnit.FromPoint(tCollapsed);
-            spacer.Format.Font.Size = 1;
-            spacer.Format.LineSpacing = MdUnit.FromPoint(0);
         }
         prevSpaceAfterPt_ = tChars.SpaceAfterPt;
 
         var table = section.AddTable();
         table.Borders.Visible = false;
+        if (tChars.ExactCellMargins)
+        {
+            table.LeftPadding = 0;
+            table.RightPadding = 0;
+            table.TopPadding = 0;
+            table.BottomPadding = 0;
+        }
 
-        // Table indentation
-        if (tChars.StartIndent > 0)
+        // Table indentation, also into the margin
+        if (tChars.StartIndent != 0)
             table.Rows.LeftIndent = MdUnit.FromPoint(tChars.StartIndentPt);
 
         // Column definitions. A column width is a length plus a number of table units (DSSSL
@@ -1022,27 +1133,55 @@ public class PdfRenderer
         // Header rows
         foreach (var row in pdfTable.HeaderRows)
         {
-            var mdRow = table.AddRow();
+            var mdRow = AddRow(table, row);
             mdRow.HeadingFormat = true;
-            RenderTableRowCells(mdRow, row);
+            RenderTableRowCells(table, mdRow, row);
         }
 
         // Body rows
         foreach (var row in pdfTable.BodyRows)
         {
-            var mdRow = table.AddRow();
-            RenderTableRowCells(mdRow, row);
+            var mdRow = AddRow(table, row);
+            RenderTableRowCells(table, mdRow, row);
         }
 
         // Footer rows
         foreach (var row in pdfTable.FooterRows)
         {
-            var mdRow = table.AddRow();
-            RenderTableRowCells(mdRow, row);
+            var mdRow = AddRow(table, row);
+            RenderTableRowCells(table, mdRow, row);
+        }
+
+        // Marks before the table go to its first paragraph
+        if (pendingMarks_.Count > 0 && table.Rows.Count > 0)
+        {
+            var first = FirstParagraphOf(table.Rows[0].Cells[0]);
+            if (first != null)
+                InsertBookmarks(first, pendingMarks_);
         }
     }
 
-    private void RenderTableRowCells(Row mdRow, PdfTableRow pdfRow)
+    private static Row AddRow(Table table, PdfTableRow pdfRow)
+    {
+        var mdRow = table.AddRow();
+        var chars = pdfRow.Characteristics;
+        if (chars.RowHeight > 0)
+        {
+            mdRow.Height = MdUnit.FromPoint(chars.RowHeightPt);
+            mdRow.HeightRule = RowHeightRule.Exactly;
+        }
+        else if (chars.MinRowHeight > 0)
+        {
+            mdRow.Height = MdUnit.FromPoint(chars.MinRowHeightPt);
+            mdRow.HeightRule = RowHeightRule.AtLeast;
+        }
+        return mdRow;
+    }
+
+    // MigraDoc pads a cell by 1.2 mm left and right unless the table says otherwise
+    private static readonly MdUnit DefaultCellPadding = MdUnit.FromMillimeter(1.2);
+
+    private void RenderTableRowCells(Table table, Row mdRow, PdfTableRow pdfRow)
     {
         int colIdx = 0;
         foreach (var child in pdfRow.Children)
@@ -1051,6 +1190,17 @@ public class PdfRenderer
 
             var cell = mdRow.Cells[colIdx];
             var chars = pdfCell.Characteristics;
+
+            // Where a leader in the cell ends: MigraDoc measures a tab stop in a cell from the inner
+            // edge of the cell (not from the indent) and drops one that reaches into the border
+            double widthPt = 0;
+            for (int i = colIdx; i < colIdx + (int)pdfCell.NColumnsSpanned && i < table.Columns.Count; i++)
+                widthPt += table.Columns[i].Width.IsEmpty ? MdUnit.FromCentimeter(2.5).Point : table.Columns[i].Width.Point;
+            var padL = table.LeftPadding.IsEmpty ? DefaultCellPadding : table.LeftPadding;
+            var padR = table.RightPadding.IsEmpty ? DefaultCellPadding : table.RightPadding;
+            cellContentWidth_ = MdUnit.FromPoint(Math.Max(0, widthPt - padL.Point - padR.Point
+                - chars.CellAfterColumnMarginPt
+                - (pdfCell.BeforeColumnBorder?.LineThicknessPt ?? 0) - (pdfCell.AfterColumnBorder?.LineThicknessPt ?? 0)));
 
             // Cell spanning
             if (pdfCell.NColumnsSpanned > 1)
@@ -1075,22 +1225,41 @@ public class PdfRenderer
                 cell.VerticalAlignment = VerticalAlignment.Bottom;
 
             // Cell content
-            RenderChildrenToCell(cell, pdfCell.Children);
+            float saved = prevSpaceAfterPt_;
+            prevSpaceAfterPt_ = 0;
+            pendingCellMarks_.Clear();
+            foreach (var c in pdfCell.Children)
+                RenderNodeToContainer(cell, c);
+            float lastSpaceAfterPt = prevSpaceAfterPt_;
+            prevSpaceAfterPt_ = saved;
 
-            // Apply cell margins to the paragraphs inside
-            foreach (var obj in cell.Elements)
+            // Cell margins as in the RTF backend of Jade: the margins before and after the column
+            // add to the indents of every paragraph, the margin before the row to the space before
+            // the first paragraph, and the space after the last paragraph plus the margin after the
+            // row is the space below it.
+            var paragraphs = cell.Elements.OfType<Paragraph>().ToList();
+            for (int i = 0; i < paragraphs.Count; i++)
             {
-                if (obj is Paragraph p)
-                {
-                    if (chars.CellBeforeColumnMargin > 0)
-                        p.Format.LeftIndent = MdUnit.FromPoint(chars.CellBeforeColumnMarginPt);
-                    if (chars.CellAfterColumnMargin > 0)
-                        p.Format.RightIndent = MdUnit.FromPoint(chars.CellAfterColumnMarginPt);
-                    if (chars.CellBeforeRowMargin > 0)
-                        p.Format.SpaceBefore = MdUnit.FromPoint(chars.CellBeforeRowMarginPt);
-                    if (chars.CellAfterRowMargin > 0)
-                        p.Format.SpaceAfter = MdUnit.FromPoint(chars.CellAfterRowMarginPt);
-                }
+                var p = paragraphs[i];
+                if (chars.CellBeforeColumnMargin > 0)
+                    p.Format.LeftIndent = MdUnit.FromPoint(p.Format.LeftIndent.Point + chars.CellBeforeColumnMarginPt);
+                if (chars.CellAfterColumnMargin > 0)
+                    p.Format.RightIndent = MdUnit.FromPoint(p.Format.RightIndent.Point + chars.CellAfterColumnMarginPt);
+                if (i == 0 && chars.CellBeforeRowMargin > 0)
+                    p.Format.SpaceBefore = MdUnit.FromPoint(p.Format.SpaceBefore.Point + chars.CellBeforeRowMarginPt);
+                if (i == paragraphs.Count - 1 && (chars.CellAfterRowMargin > 0 || lastSpaceAfterPt > 0))
+                    p.Format.SpaceAfter = MdUnit.FromPoint(lastSpaceAfterPt + chars.CellAfterRowMarginPt);
+            }
+
+            // Marks after the last paragraph of the cell, or in a cell without one
+            if (pendingCellMarks_.Count > 0)
+            {
+                var para = paragraphs.Count > 0 ? paragraphs[^1] : cell.AddParagraph();
+                if (paragraphs.Count == 0)
+                    SetNoHeight(para);
+                foreach (var name in pendingCellMarks_)
+                    para.AddBookmark(name, prepend: false);
+                pendingCellMarks_.Clear();
             }
 
             colIdx += (int)pdfCell.NColumnsSpanned;
@@ -1130,12 +1299,11 @@ public class PdfRenderer
 
     // ==================== Rule ====================
 
-    private static void RenderRule(Section section, PdfRule rule)
+    private static void RenderRule(Paragraph para, PdfRule rule)
     {
         var chars = rule.Characteristics;
         if (rule.Orientation == Symbol.symbolHorizontal)
         {
-            var para = section.AddParagraph();
             para.Format.SpaceBefore = MdUnit.FromPoint(chars.SpaceBeforePt);
             para.Format.SpaceAfter = MdUnit.FromPoint(chars.SpaceAfterPt);
             para.Format.Borders.Bottom.Style = BorderStyle.Single;
@@ -1181,12 +1349,11 @@ public class PdfRenderer
             image.Height = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxHeight));
     }
 
-    private static void RenderExternalGraphicToCell(Cell cell, PdfExternalGraphic graphic)
+    private static void RenderExternalGraphicToCell(Paragraph para, PdfExternalGraphic graphic)
     {
         string path = ResolveImagePath(graphic.SystemId);
         if (!File.Exists(path)) return;
 
-        var para = cell.AddParagraph();
         var image = para.AddImage(path);
         if (graphic.HasMaxWidth)
             image.Width = MdUnit.FromPoint(PdfCharacteristics.ToPoints(graphic.MaxWidth));
@@ -1222,18 +1389,23 @@ public class PdfRenderer
         // Don't set SpaceAfter — it's consumed by the next element's collapsing.
         prevSpaceAfterPt_ = chars.SpaceAfterPt;
 
-        if (chars.StartIndent > 0)
+        // Indents, also into the margin
+        if (chars.StartIndent != 0)
             para.Format.LeftIndent = MdUnit.FromPoint(chars.StartIndentPt);
-        if (chars.EndIndent > 0)
+        if (chars.EndIndent != 0)
             para.Format.RightIndent = MdUnit.FromPoint(chars.EndIndentPt);
         if (chars.FirstLineStartIndent != 0)
             para.Format.FirstLineIndent = MdUnit.FromPoint(chars.FirstLineStartIndentPt);
 
         if (chars.LineSpacing > 0 && chars.FontSize > 0)
         {
-            para.Format.LineSpacingRule = LineSpacingRule.AtLeast;
+            para.Format.LineSpacingRule = chars.LineSpacingExact ? LineSpacingRule.Exactly : LineSpacingRule.AtLeast;
             para.Format.LineSpacing = MdUnit.FromPoint(chars.LineSpacingPt);
         }
+
+        if (chars.TabStops != null)
+            foreach (var (position, alignment, leader) in ParseTabStops(chars.TabStops))
+                para.Format.TabStops.AddTabStop(position, alignment, leader);
 
         if (chars.Quadding == Symbol.symbolCenter)
             para.Format.Alignment = ParagraphAlignment.Center;
@@ -1249,15 +1421,73 @@ public class PdfRenderer
             para.Format.KeepWithNext = true;
     }
 
-    /// Add text to a paragraph, converting \n to MigraDoc line breaks.
+    /// Tab stops of the extension characteristic tab-stops: entries separated by white space, each
+    /// "position[:alignment[:leader]]". The position is a number with the unit pt, mm, cm or in
+    /// (pt if none), measured like a MigraDoc tab stop; the alignment is start, end, center or
+    /// decimal (start if none); the leader is none, dots, dashes, lines, heavy or middle-dots.
+    /// An entry that cannot be read is an error.
+    public static List<(MdUnit Position, TabAlignment Alignment, TabLeader Leader)> ParseTabStops(string spec)
+    {
+        var result = new List<(MdUnit, TabAlignment, TabLeader)>();
+        foreach (var entry in spec.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = entry.Split(':');
+            if (parts.Length > 3)
+                throw new DssslProcessingException($"tab-stops: too many parts in \"{entry}\"");
+            var alignment = (parts.Length > 1 ? parts[1] : "start") switch
+            {
+                "start" => TabAlignment.Left,
+                "end" => TabAlignment.Right,
+                "center" => TabAlignment.Center,
+                "decimal" => TabAlignment.Decimal,
+                var a => throw new DssslProcessingException($"tab-stops: unknown alignment \"{a}\" in \"{entry}\"")
+            };
+            var leader = (parts.Length > 2 ? parts[2] : "none") switch
+            {
+                "none" => TabLeader.Spaces,
+                "dots" => TabLeader.Dots,
+                "dashes" => TabLeader.Dashes,
+                "lines" => TabLeader.Lines,
+                "heavy" => TabLeader.Heavy,
+                "middle-dots" => TabLeader.MiddleDot,
+                var l => throw new DssslProcessingException($"tab-stops: unknown leader \"{l}\" in \"{entry}\"")
+            };
+            result.Add((ParseLength(parts[0], entry), alignment, leader));
+        }
+        return result;
+    }
+
+    private static MdUnit ParseLength(string text, string entry)
+    {
+        var units = new (string Suffix, Func<double, MdUnit> Make)[]
+        {
+            ("pt", MdUnit.FromPoint), ("mm", MdUnit.FromMillimeter), ("cm", MdUnit.FromCentimeter), ("in", MdUnit.FromInch)
+        };
+        foreach (var (suffix, make) in units)
+            if (text.EndsWith(suffix, StringComparison.Ordinal))
+                return make(ParseNumber(text[..^suffix.Length], entry));
+        return MdUnit.FromPoint(ParseNumber(text, entry));
+    }
+
+    private static double ParseNumber(string text, string entry) =>
+        double.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? value
+            : throw new DssslProcessingException($"tab-stops: cannot read the position of \"{entry}\"");
+
     /// Add text to a paragraph. For verbatim text (containing \n),
     /// convert newlines to MigraDoc line breaks and preserve spaces
     /// as non-breaking spaces so MigraDoc doesn't collapse them.
+    /// Preserved whitespace in lines that wrap keeps its width and still breaks:
+    /// a run of spaces becomes non-breaking spaces with an ordinary space at its end.
+    /// A tab character is a tab (to the next tab stop) in either case.
     private static void AddTextWithLineBreaks(Paragraph para, string text, PdfCharacteristics chars)
     {
         bool verbatim = text.Contains('\n');
         if (!verbatim)
         {
+            if (chars.InputWhitespaceTreatment == Symbol.symbolPreserve && text.Contains(' '))
+                text = PreserveSpaces(text, chars.Lines == Symbol.symbolWrap || chars.Lines == Symbol.symbolAsisWrap);
             var ft = para.AddFormattedText(text);
             ApplyFont(ft.Font, chars);
             return;
@@ -1279,6 +1509,34 @@ public class PdfRenderer
         }
     }
 
+    // MigraDoc collapses a run of spaces and drops a space at the start of a line. Without wrapping
+    // every space is non-breaking; with it, a run keeps one ordinary space at its end to break at,
+    // except at the start of the text.
+    private static string PreserveSpaces(string text, bool wraps)
+    {
+        if (!wraps)
+            return text.Replace(' ', ' ');
+        var sb = new System.Text.StringBuilder(text.Length);
+        int i = 0;
+        while (i < text.Length)
+        {
+            if (text[i] != ' ')
+            {
+                sb.Append(text[i++]);
+                continue;
+            }
+            int j = i;
+            while (j < text.Length && text[j] == ' ')
+                j++;
+            if (i == 0)
+                sb.Append(' ', j - i);
+            else
+                sb.Append(' ', j - i - 1).Append(' ');
+            i = j;
+        }
+        return sb.ToString();
+    }
+
     private static void ApplyFont(Font font, PdfCharacteristics chars)
     {
         font.Name = chars.FontFamily;
@@ -1289,6 +1547,8 @@ public class PdfRenderer
             font.Bold = true;
         if (chars.IsItalic)
             font.Italic = true;
+        if (chars.Underline)
+            font.Underline = chars.ScoreSpaces ? Underline.Single : Underline.Words;
     }
 
     private static MdColor ToMdColor(byte r, byte g, byte b)

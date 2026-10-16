@@ -308,10 +308,18 @@ public class PdfFOTBuilder : FOTBuilder
         if (processingMode.size() == 0 && node != null)
         {
             var name = GetLocationName(node);
-            if (name != null)
+            if (name == null)
+                return;
+            // Between the cells of a table (a row element, say) the mark waits for the next cell,
+            // so that it lands on the page of its row and not after the whole table.
+            if (currentTable_ != null && FindEnclosingCell() == null)
+                pendingTableMarks_.Add(name);
+            else
                 AddNode(new PdfLocationMark(name));
         }
     }
+
+    private readonly System.Collections.Generic.List<string> pendingTableMarks_ = new();
 
     public override void currentNodePageNumber(NodePtr node)
     {
@@ -398,18 +406,27 @@ public class PdfFOTBuilder : FOTBuilder
     private TablePartSection tablePartSection_ = TablePartSection.Body;
     private PdfTableRow? currentTableRow_;
 
+    // Enclosing tables while a table in a cell is built
+    private readonly Stack<(PdfTable? table, PdfTableRow? row, TablePartSection section)> tableStack_ = new();
+
     public override void startTable(TableNIC nic)
     {
         ApplyDisplayNIC(nic);
         var table = new PdfTable(current_);
         AddNode(table);
         characteristicsStack_.Push(current_.Clone());
+        tableStack_.Push((currentTable_, currentTableRow_, tablePartSection_));
         currentTable_ = table;
     }
 
     public override void endTable()
     {
         currentTable_ = null;
+        if (tableStack_.Count > 0)
+            (currentTable_, currentTableRow_, tablePartSection_) = tableStack_.Pop();
+        foreach (var name in pendingTableMarks_)
+            AddNode(new PdfLocationMark(name));
+        pendingTableMarks_.Clear();
         end();
     }
 
@@ -458,6 +475,8 @@ public class PdfFOTBuilder : FOTBuilder
             section_ = section;
         }
 
+        public PdfFOTBuilder Parent => parent_;
+
         public override void startTableRow()
         {
             var saved = parent_.tablePartSection_;
@@ -504,6 +523,16 @@ public class PdfFOTBuilder : FOTBuilder
         public override void setCellAfterColumnMargin(long m) => parent_.setCellAfterColumnMargin(m);
         public override void setCellBackground(bool b) => parent_.setCellBackground(b);
         public override void setCellRowAlignment(Symbol a) => parent_.setCellRowAlignment(a);
+        public override void setLines(Symbol l) => parent_.setLines(l);
+        public override void setInputWhitespaceTreatment(Symbol t) => parent_.setInputWhitespaceTreatment(t);
+        public override void setScoreSpaces(bool b) => parent_.setScoreSpaces(b);
+        public override void startScore(Symbol type) => parent_.startScore(type);
+        public override void endScore() => parent_.endScore();
+
+        // Extension characteristics: the setters resolve the proxy to its parent
+        public override void extensionSet(Action<FOTBuilder, bool> func, bool arg) => func(parent_, arg);
+        public override void extensionSet(Action<FOTBuilder, StringC> func, StringC arg) => func(parent_, arg);
+        public override void extensionSet(Action<FOTBuilder, long> func, long arg) => func(parent_, arg);
 
         public override void start() => parent_.start();
         public override void end() => parent_.end();
@@ -573,6 +602,9 @@ public class PdfFOTBuilder : FOTBuilder
             nic.nColumnsSpanned, nic.nRowsSpanned);
         currentTableRow_?.Add(cell);
         containerStack_.Push(cell);
+        foreach (var name in pendingTableMarks_)
+            cell.Add(new PdfLocationMark(name));
+        pendingTableMarks_.Clear();
     }
 
     public override void endTableCell()
@@ -643,10 +675,55 @@ public class PdfFOTBuilder : FOTBuilder
         // Phase 2
     }
 
+    // Extension characteristics, declared in a style sheet with
+    //   (declare-characteristic tab-stops "UNREGISTERED::Dazzle//Characteristic::tab-stops" "")
+    // and then specified like any inherited characteristic. A style sheet that does not declare
+    // them gets the behaviour of earlier versions.
+    public const string CharacteristicPrefix = "UNREGISTERED::Dazzle//Characteristic::";
+
+    // The setter receives the builder the engine is talking to, which may be a port proxy.
+    private static PdfFOTBuilder Of(FOTBuilder fotb) =>
+        fotb is TablePartPortProxy proxy ? proxy.Parent : (PdfFOTBuilder)fotb;
+
     public static FOTBuilder.ExtensionTableEntry[] GetExtensions()
     {
-        // Phase 2: barcode, html-content, page-overlay, attachment
-        return System.Array.Empty<FOTBuilder.ExtensionTableEntry>();
+        return new[]
+        {
+            // "<position>[:<alignment>[:<leader>]] …", see PdfRenderer.ParseTabStops
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "tab-stops",
+                stringSetter = (fotb, s) =>
+                {
+                    var text = s.ToString();
+                    Of(fotb).current_.TabStops = string.IsNullOrWhiteSpace(text) ? null : text;
+                }
+            },
+            // line-spacing as the exact distance of the lines, not as a minimum
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "line-spacing-exact?",
+                boolSetter = (fotb, b) => Of(fotb).current_.LineSpacingExact = b
+            },
+            // height of a table-row: at least, or exactly (0 = from its content)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "min-row-height",
+                lengthSetter = (fotb, n) => Of(fotb).current_.MinRowHeight = n
+            },
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "row-height",
+                lengthSetter = (fotb, n) => Of(fotb).current_.RowHeight = n
+            },
+            // the cell margins are the whole distance between cell edge and content; without it the
+            // renderer keeps its own padding of 1.2 mm left and right in addition
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "exact-cell-margins?",
+                boolSetter = (fotb, b) => Of(fotb).current_.ExactCellMargins = b
+            }
+        };
     }
 
     // ==================== Characteristics (set* methods) ====================
@@ -716,6 +793,17 @@ public class PdfFOTBuilder : FOTBuilder
 
     // Page number format
     public override void setPageNumberFormat(StringC format) => current_.PageNumberFormat = format.ToString();
+
+    // Score: 'after is an underline. MigraDoc has no overline or strike-through, so 'before,
+    // 'through, a length and a character are scored as nothing.
+    public override void startScore(Symbol type)
+    {
+        start();
+        if (type == Symbol.symbolAfter)
+            current_.Underline = true;
+    }
+
+    public override void setScoreSpaces(bool score) => current_.ScoreSpaces = score;
 
     // ==================== Helpers ====================
 

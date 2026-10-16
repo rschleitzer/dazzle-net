@@ -65,6 +65,17 @@ public class PdfCharacteristics
     // Page number format: "1" = arabic, "i" = lowercase roman, "I" = uppercase roman
     public string PageNumberFormat { get; set; } = "1";
 
+    // Score flow object (type 'after) and score-spaces?
+    public bool Underline { get; set; } = false;
+    public bool ScoreSpaces { get; set; } = true;
+
+    // Dazzle extension characteristics (see DazzleCharacteristics)
+    public string? TabStops { get; set; }
+    public bool LineSpacingExact { get; set; } = false;
+    public long MinRowHeight { get; set; } = 0;
+    public long RowHeight { get; set; } = 0;
+    public bool ExactCellMargins { get; set; } = false;
+
     public PdfCharacteristics Clone()
     {
         return (PdfCharacteristics)MemberwiseClone();
@@ -93,6 +104,8 @@ public class PdfCharacteristics
     public float CellAfterRowMarginPt => ToPoints(CellAfterRowMargin);
     public float CellBeforeColumnMarginPt => ToPoints(CellBeforeColumnMargin);
     public float CellAfterColumnMarginPt => ToPoints(CellAfterColumnMargin);
+    public float MinRowHeightPt => ToPoints(MinRowHeight);
+    public float RowHeightPt => ToPoints(RowHeight);
 
     public bool IsBold => FontWeight == Symbol.symbolBold
                        || FontWeight == Symbol.symbolUltraBold
