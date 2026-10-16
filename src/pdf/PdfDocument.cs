@@ -3,7 +3,8 @@ namespace Dazzle.Pdf;
 using OpenJade.Style;
 using Symbol = OpenJade.Style.FOTBuilder.Symbol;
 
-// Base class for all intermediate document nodes
+// The flow object tree the FOT builder collects and PdfLayout sets. Every node keeps a snapshot
+// of the inherited characteristics it was made under.
 public abstract class PdfNode
 {
     public PdfCharacteristics Characteristics { get; set; }
@@ -14,10 +15,24 @@ public abstract class PdfNode
     }
 }
 
+// The display characteristics of a block (DisplayNIC)
+public class PdfDisplay
+{
+    public long SpaceBefore;
+    public bool SpaceBeforeConditional = true;
+    public long SpaceAfter;
+    public bool SpaceAfterConditional = true;
+    public bool KeepWithNext;
+    public bool KeepWithPrevious;
+    public bool BreakBefore;
+    public bool BreakAfter;
+}
+
 // Container node that can hold child nodes
 public abstract class PdfContainerNode : PdfNode
 {
     public List<PdfNode> Children { get; } = new();
+    public PdfDisplay Display { get; set; } = new();
 
     protected PdfContainerNode(PdfCharacteristics characteristics) : base(characteristics) { }
 
@@ -27,8 +42,7 @@ public abstract class PdfContainerNode : PdfNode
 // Root: a simple page sequence with header/footer slots and content
 public class PdfPageSequence : PdfContainerNode
 {
-    // DSSSL defines 24 header/footer slots (4 page types × 6 parts)
-    // For Phase 1, we store them but only render the basic ones
+    // 24 header/footer slots (FOTBuilder.HF flags)
     public List<PdfNode>[] HeaderFooter { get; }
 
     public PdfPageSequence(PdfCharacteristics characteristics, int headerFooterSlots)
@@ -46,22 +60,34 @@ public class PdfParagraph : PdfContainerNode
     public PdfParagraph(PdfCharacteristics characteristics) : base(characteristics) { }
 }
 
-// Display group: vertical container for block-level content
+// Display group or display box: vertical container for block-level content
 public class PdfDisplayGroup : PdfContainerNode
 {
     public PdfDisplayGroup(PdfCharacteristics characteristics) : base(characteristics) { }
 }
 
-// Scroll: vertical flow container (similar to display group for PDF purposes)
+// Scroll: vertical flow container
 public class PdfScroll : PdfContainerNode
 {
     public PdfScroll(PdfCharacteristics characteristics) : base(characteristics) { }
 }
 
-// Sequence: inline container
+// Sequence, link, score, inline box: inline container
 public class PdfSequence : PdfContainerNode
 {
     public PdfSequence(PdfCharacteristics characteristics) : base(characteristics) { }
+}
+
+// Line field: inline container at least field-width wide
+public class PdfLineField : PdfContainerNode
+{
+    public PdfLineField(PdfCharacteristics characteristics) : base(characteristics) { }
+}
+
+// Leader: inline fill with a pattern
+public class PdfLeader : PdfContainerNode
+{
+    public PdfLeader(PdfCharacteristics characteristics) : base(characteristics) { }
 }
 
 // Leaf: a run of text with a style snapshot
@@ -75,35 +101,13 @@ public class PdfTextRun : PdfNode
     }
 }
 
-// Leaf: page number placeholder
+// Leaf: page number of the page the text is set on
 public class PdfPageNumber : PdfNode
 {
     public PdfPageNumber(PdfCharacteristics characteristics) : base(characteristics) { }
 }
 
-// Leaf: horizontal or vertical rule
-public class PdfRule : PdfNode
-{
-    public Symbol Orientation { get; }
-    public bool HasLength { get; }
-    public long Length { get; }
-
-    public PdfRule(PdfCharacteristics characteristics, Symbol orientation, bool hasLength, long length)
-        : base(characteristics)
-    {
-        Orientation = orientation;
-        HasLength = hasLength;
-        Length = length;
-    }
-}
-
-// Leader: inline dot fill between title and page number
-public class PdfLeader : PdfContainerNode
-{
-    public PdfLeader(PdfCharacteristics characteristics) : base(characteristics) { }
-}
-
-// Cross-reference page number (resolved via named locations)
+// Leaf: page number of the page an element begins on
 public class PdfNodePageNumber : PdfNode
 {
     public string LocationName { get; }
@@ -115,7 +119,7 @@ public class PdfNodePageNumber : PdfNode
     }
 }
 
-// Location mark: registers a named location for cross-page references
+// Leaf: the place where an element begins
 public class PdfLocationMark : PdfNode
 {
     public string LocationName { get; }
@@ -127,13 +131,79 @@ public class PdfLocationMark : PdfNode
     }
 }
 
-// Table: contains columns, header rows, body rows, footer rows
+// Leaf: paragraph-break, the paragraph goes on with a new first line
+public class PdfParagraphBreak : PdfNode
+{
+    public PdfParagraphBreak(PdfCharacteristics characteristics) : base(characteristics) { }
+}
+
+// Leaf: horizontal or vertical rule
+public class PdfRule : PdfNode
+{
+    public Symbol Orientation { get; }
+    public bool HasLength { get; }
+    public long Length { get; }
+    public PdfDisplay Display { get; set; } = new();
+
+    public PdfRule(PdfCharacteristics characteristics, Symbol orientation, bool hasLength, long length)
+        : base(characteristics)
+    {
+        Orientation = orientation;
+        HasLength = hasLength;
+        Length = length;
+    }
+}
+
+// Leaf: external image
+public class PdfExternalGraphic : PdfNode
+{
+    public string SystemId { get; }
+    public bool IsDisplay { get; }
+    public bool HasMaxWidth { get; }
+    public long MaxWidth { get; }
+    public bool HasMaxHeight { get; }
+    public long MaxHeight { get; }
+    public PdfDisplay Display { get; set; } = new();
+
+    public PdfExternalGraphic(PdfCharacteristics characteristics, string systemId,
+        bool isDisplay, bool hasMaxWidth, long maxWidth, bool hasMaxHeight, long maxHeight)
+        : base(characteristics)
+    {
+        SystemId = systemId;
+        IsDisplay = isDisplay;
+        HasMaxWidth = hasMaxWidth;
+        MaxWidth = maxWidth;
+        HasMaxHeight = hasMaxHeight;
+        MaxHeight = maxHeight;
+    }
+}
+
+// Border specification for an edge, captured from a table-border flow object
+public class PdfBorder
+{
+    public long LineThickness { get; set; } = 1000;
+    public byte ColorR { get; set; }
+    public byte ColorG { get; set; }
+    public byte ColorB { get; set; }
+
+    public double LineThicknessPt => PdfCharacteristics.ToPoints(LineThickness);
+}
+
+// Table: columns, header rows, body rows, footer rows, and the borders of the table
 public class PdfTable : PdfNode
 {
     public List<PdfTableColumn> Columns { get; } = new();
     public List<PdfTableRow> HeaderRows { get; } = new();
     public List<PdfTableRow> BodyRows { get; } = new();
     public List<PdfTableRow> FooterRows { get; } = new();
+    public PdfDisplay Display { get; set; } = new();
+    public bool HasWidth { get; set; }
+    public long Width { get; set; }
+
+    public PdfBorder? BeforeRowBorder { get; set; }
+    public PdfBorder? AfterRowBorder { get; set; }
+    public PdfBorder? BeforeColumnBorder { get; set; }
+    public PdfBorder? AfterColumnBorder { get; set; }
 
     public PdfTable(PdfCharacteristics characteristics) : base(characteristics) { }
 }
@@ -146,8 +216,6 @@ public class PdfTableColumn
     public bool HasWidth { get; set; }
     public long Width { get; set; }
     public double TableUnitFactor { get; set; }
-
-    public float WidthPt => PdfCharacteristics.ToPoints(Width);
 }
 
 // Row in a table (contains cells)
@@ -163,11 +231,10 @@ public class PdfTableCell : PdfContainerNode
     public uint NColumnsSpanned { get; }
     public uint NRowsSpanned { get; }
 
-    // DSSSL cell border sub-flow-object specifications
-    public PdfCellBorder? BeforeRowBorder { get; set; }
-    public PdfCellBorder? AfterRowBorder { get; set; }
-    public PdfCellBorder? BeforeColumnBorder { get; set; }
-    public PdfCellBorder? AfterColumnBorder { get; set; }
+    public PdfBorder? BeforeRowBorder { get; set; }
+    public PdfBorder? AfterRowBorder { get; set; }
+    public PdfBorder? BeforeColumnBorder { get; set; }
+    public PdfBorder? AfterColumnBorder { get; set; }
 
     public PdfTableCell(PdfCharacteristics characteristics, uint columnIndex,
         uint nColumnsSpanned, uint nRowsSpanned)
@@ -176,39 +243,5 @@ public class PdfTableCell : PdfContainerNode
         ColumnIndex = columnIndex;
         NColumnsSpanned = nColumnsSpanned;
         NRowsSpanned = nRowsSpanned;
-    }
-}
-
-// Border specification for a cell edge, captured from DSSSL rule sub-flow-object
-public class PdfCellBorder
-{
-    public long LineThickness { get; set; } = 500; // default 0.5pt
-    public byte ColorR { get; set; }
-    public byte ColorG { get; set; }
-    public byte ColorB { get; set; }
-
-    public float LineThicknessPt => PdfCharacteristics.ToPoints(LineThickness);
-}
-
-// Leaf: external image
-public class PdfExternalGraphic : PdfNode
-{
-    public string SystemId { get; }
-    public bool IsDisplay { get; }
-    public bool HasMaxWidth { get; }
-    public long MaxWidth { get; }
-    public bool HasMaxHeight { get; }
-    public long MaxHeight { get; }
-
-    public PdfExternalGraphic(PdfCharacteristics characteristics, string systemId,
-        bool isDisplay, bool hasMaxWidth, long maxWidth, bool hasMaxHeight, long maxHeight)
-        : base(characteristics)
-    {
-        SystemId = systemId;
-        IsDisplay = isDisplay;
-        HasMaxWidth = hasMaxWidth;
-        MaxWidth = maxWidth;
-        HasMaxHeight = hasMaxHeight;
-        MaxHeight = maxHeight;
     }
 }

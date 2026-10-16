@@ -9,6 +9,7 @@ using LengthSpec = OpenJade.Style.FOTBuilder.LengthSpec;
 using DeviceRGBColor = OpenJade.Style.FOTBuilder.DeviceRGBColor;
 using DisplaySpace = OpenJade.Style.FOTBuilder.DisplaySpace;
 
+// Collects the flow object tree; PdfLayout sets it into pages and PdfRenderer writes them.
 public class PdfFOTBuilder : FOTBuilder
 {
     private CmdLineApp app_;
@@ -23,9 +24,10 @@ public class PdfFOTBuilder : FOTBuilder
     private PdfPageSequence? pageSequence_;
     private Stack<PdfContainerNode> containerStack_ = new();
 
-    // Header/footer slot tracking: when set, content goes to HF slot instead of main content
+    // Header/footer slot tracking: when set, content goes to HF slot instead of main content,
+    // unless it goes into a container opened in the header or footer itself
     private uint? hfSlot_;
-
+    private int hfDepth_;
 
     public PdfFOTBuilder(CmdLineApp app, string outputFilename)
     {
@@ -39,22 +41,31 @@ public class PdfFOTBuilder : FOTBuilder
         outputFilename_ = outputFilename;
     }
 
-    // Current container we're adding content to (null if outside page sequence)
-    private PdfContainerNode? CurrentContainer =>
-        containerStack_.Count > 0 ? containerStack_.Peek()
-        : pageSequence_;
-
     // Add a node: if inside a container (e.g. paragraph), add there.
     // Otherwise, if in HF mode, add to the HF slot.
     // Otherwise, add to the page sequence.
     private void AddNode(PdfNode node)
     {
-        if (containerStack_.Count > 0)
-            containerStack_.Peek().Add(node);
-        else if (hfSlot_.HasValue && pageSequence_ != null)
+        if (hfSlot_.HasValue && pageSequence_ != null && containerStack_.Count <= hfDepth_)
             pageSequence_.HeaderFooter[hfSlot_.Value].Add(node);
+        else if (containerStack_.Count > 0)
+            containerStack_.Peek().Add(node);
         else
             pageSequence_?.Add(node);
+    }
+
+    // A container node becomes the place of what follows until its end
+    private void Open(PdfContainerNode node)
+    {
+        AddNode(node);
+        characteristicsStack_.Push(current_.Clone());
+        containerStack_.Push(node);
+    }
+
+    private void Close()
+    {
+        if (containerStack_.Count > 0) containerStack_.Pop();
+        end();
     }
 
     // True when the current container is a table row (sequences should not be pushed)
@@ -83,6 +94,7 @@ public class PdfFOTBuilder : FOTBuilder
     public override void startSimplePageSequenceHeaderFooter(uint flags)
     {
         hfSlot_ = flags;
+        hfDepth_ = containerStack_.Count;
         characteristicsStack_.Push(current_.Clone());
     }
 
@@ -112,16 +124,15 @@ public class PdfFOTBuilder : FOTBuilder
     {
         if (pageSequences_.Count == 0)
             return;
-        var renderer = new PdfRenderer();
-        renderer.Render(pageSequences_, outputFilename_);
+        using var stream = File.Create(outputFilename_);
+        new PdfRenderer().Render(pageSequences_, stream);
     }
 
     public void Finish(Stream stream)
     {
         if (pageSequences_.Count == 0)
             return;
-        var renderer = new PdfRenderer();
-        renderer.Render(pageSequences_, stream);
+        new PdfRenderer().Render(pageSequences_, stream);
     }
 
     // ==================== Block-level flow objects ====================
@@ -141,9 +152,6 @@ public class PdfFOTBuilder : FOTBuilder
     {
         if (characteristicsStack_.Count > 0)
         {
-            // RTF semantics: remove top, then restore a copy from the new top.
-            // This ensures set* modifications are scoped to the current FO
-            // and don't leak into subsequent siblings.
             characteristicsStack_.Pop();
             if (characteristicsStack_.Count > 0)
                 current_ = characteristicsStack_.Peek().Clone();
@@ -152,47 +160,41 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void startParagraph(ParagraphNIC nic)
     {
-        ApplyDisplayNIC(nic);
-        var para = new PdfParagraph(current_);
-        AddNode(para);
-        characteristicsStack_.Push(current_.Clone());
-        containerStack_.Push(para);
+        var para = new PdfParagraph(current_) { Display = Display(nic) };
+        Open(para);
     }
 
-    public override void endParagraph()
+    public override void endParagraph() => Close();
+
+    public override void paragraphBreak(ParagraphNIC nic)
     {
-        if (containerStack_.Count > 0) containerStack_.Pop();
-        end();
+        AddNode(new PdfParagraphBreak(current_));
+        atomic();
     }
 
     public override void startDisplayGroup(DisplayGroupNIC nic)
     {
-        ApplyDisplayNIC(nic);
-        var group = new PdfDisplayGroup(current_);
-        AddNode(group);
-        characteristicsStack_.Push(current_.Clone());
-        containerStack_.Push(group);
+        Open(new PdfDisplayGroup(current_) { Display = Display(nic) });
     }
 
-    public override void endDisplayGroup()
+    public override void endDisplayGroup() => Close();
+
+    public override void startBox(BoxNIC nic)
     {
-        if (containerStack_.Count > 0) containerStack_.Pop();
-        end();
+        if (nic.isDisplay)
+            Open(new PdfDisplayGroup(current_) { Display = Display(nic) });
+        else
+            Open(new PdfSequence(current_));
     }
+
+    public override void endBox() => Close();
 
     public override void startScroll()
     {
-        var scroll = new PdfScroll(current_);
-        AddNode(scroll);
-        characteristicsStack_.Push(current_.Clone());
-        containerStack_.Push(scroll);
+        Open(new PdfScroll(current_));
     }
 
-    public override void endScroll()
-    {
-        if (containerStack_.Count > 0) containerStack_.Pop();
-        end();
-    }
+    public override void endScroll() => Close();
 
     public override void startSequence()
     {
@@ -203,17 +205,7 @@ public class PdfFOTBuilder : FOTBuilder
             characteristicsStack_.Push(current_.Clone());
             return;
         }
-
-        // Sequences are inline pass-through containers in DSSSL — they don't have
-        // their own display spacing. Clear inherited SpaceBefore/SpaceAfter so they
-        // don't inflate inter-element gaps at the rendering level.
-        var seqChars = current_.Clone();
-        seqChars.SpaceBefore = 0;
-        seqChars.SpaceAfter = 0;
-        var seq = new PdfSequence(seqChars);
-        AddNode(seq);
-        characteristicsStack_.Push(current_.Clone());
-        containerStack_.Push(seq);
+        Open(new PdfSequence(current_));
     }
 
     public override void endSequence()
@@ -224,45 +216,50 @@ public class PdfFOTBuilder : FOTBuilder
             end();
             return;
         }
-        if (containerStack_.Count > 0) containerStack_.Pop();
-        end();
+        Close();
     }
+
+    public override void startLineField(LineFieldNIC nic)
+    {
+        Open(new PdfLineField(current_));
+    }
+
+    public override void endLineField() => Close();
 
     // ==================== Inline content ====================
 
     public override void characters(Char[] data, nuint size)
     {
-        bool verbatim = current_.Lines == Symbol.symbolAsis
-            || current_.InputWhitespaceTreatment == Symbol.symbolPreserve;
+        bool verbatim = current_.Verbatim;
 
         var sb = new System.Text.StringBuilder((int)size);
         for (nuint i = 0; i < size; i++)
         {
-            char c = (char)data[i];
+            uint u = data[i];
             if (verbatim)
             {
                 // Preserve whitespace: keep CR/LF as newlines
-                if (c == '\r')
+                if (u == '\r')
                 {
                     if (i + 1 < size && data[i + 1] == '\n')
                         i++; // skip CR in CR+LF
                     sb.Append('\n');
                 }
                 else
-                    sb.Append(c);
+                    AppendChar(sb, u);
             }
             else
             {
                 // Normal mode: collapse record-ends and runs of whitespace
-                if (c == '\r')
+                if (u == '\r')
                     continue;
-                if (c == '\n' || c == ' ' || c == '\t')
+                if (u == '\n' || u == ' ' || u == '\t')
                 {
                     // Collapse any run of whitespace (spaces, tabs, newlines) into one space
                     sb.Append(' ');
                     while (i + 1 < size)
                     {
-                        char next = (char)data[i + 1];
+                        uint next = data[i + 1];
                         if (next == ' ' || next == '\t' || next == '\n' || next == '\r')
                             i++;
                         else
@@ -270,7 +267,7 @@ public class PdfFOTBuilder : FOTBuilder
                     }
                 }
                 else
-                    sb.Append(c);
+                    AppendChar(sb, u);
             }
         }
         var text = sb.ToString();
@@ -278,9 +275,18 @@ public class PdfFOTBuilder : FOTBuilder
             AddNode(new PdfTextRun(text, current_));
     }
 
+    private static void AppendChar(System.Text.StringBuilder sb, uint u)
+    {
+        if (u > 0xFFFF)
+            sb.Append(char.ConvertFromUtf32((int)u));
+        else
+            sb.Append((char)u);
+    }
+
     public override void pageNumber()
     {
         AddNode(new PdfPageNumber(current_));
+        atomic();
     }
 
     // Position point shift (superscript/subscript via DSSSL characteristic)
@@ -289,17 +295,35 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void startLeader(LeaderNIC nic)
     {
-        var leader = new PdfLeader(current_);
-        AddNode(leader);
-        characteristicsStack_.Push(current_.Clone());
-        containerStack_.Push(leader);
+        Open(new PdfLeader(current_));
     }
 
-    public override void endLeader()
+    public override void endLeader() => Close();
+
+    // Score: the line goes with the text under the characteristics of the score
+    public override void startScore(Symbol type)
     {
-        if (containerStack_.Count > 0) containerStack_.Pop();
-        end();
+        start();
+        current_.ScoreType = type;
+        current_.ScoreLength = null;
     }
+
+    public override void startScore(LengthSpec length)
+    {
+        start();
+        current_.ScoreType = Symbol.symbolFalse;
+        current_.ScoreLength = length.length;
+    }
+
+    public override void startScore(Char c)
+    {
+        // A character score is set as an underline
+        start();
+        current_.ScoreType = Symbol.symbolAfter;
+        current_.ScoreLength = null;
+    }
+
+    public override void setScoreSpaces(bool score) => current_.ScoreSpaces = score;
 
     // ==================== Node tracking & cross-references ====================
 
@@ -350,15 +374,16 @@ public class PdfFOTBuilder : FOTBuilder
 
     // ==================== Atomic flow objects ====================
 
-    // Cell border ports: callback fires with characteristics (color, line-thickness) already
-    // set on current_ via set* calls from the border sosofo (when it's a table-border FO).
-    private enum CellBorderPort { BeforeRow, AfterRow, BeforeColumn, AfterColumn }
-    private long lineThickness_ = 500; // DSSSL units; 0.5pt default
+    // Border ports: the callback fires with the characteristics (color, line-thickness) of the
+    // table-border flow object already set on current_.
+    private enum BorderPort { BeforeRow, AfterRow, BeforeColumn, AfterColumn }
+    private long lineThickness_ = 1000; // DSSSL units; 1pt default
 
     // True when setColor or setLineThickness has been called since the last border capture.
     // Used to distinguish "undefined" border ports (no DSSSL characteristic set) from
     // defined ones (where the engine pushes characteristics before the port callback).
     private bool borderCharacteristicsFresh_ = false;
+    private bool borderPresent_ = true;
 
     // Saved state at startTableCell, so we can undo border-port mutations to current_.
     // (openjade-net's StyleStack.pop does not invoke set* to restore FOT builder state.)
@@ -368,15 +393,21 @@ public class PdfFOTBuilder : FOTBuilder
     public override void setLineThickness(long thickness)
     {
         lineThickness_ = thickness;
+        current_.LineThickness = thickness;
+        borderCharacteristicsFresh_ = true;
+    }
+
+    public override void setBorderPresent(bool present)
+    {
+        borderPresent_ = present;
         borderCharacteristicsFresh_ = true;
     }
 
     public override void rule(RuleNIC nic)
     {
         start();
-        ApplyDisplayNIC(nic);
         AddNode(new PdfRule(current_, nic.orientation,
-            nic.hasLength, nic.hasLength ? nic.length.length : 0));
+            nic.hasLength, nic.hasLength ? nic.length.length : 0) { Display = Display(nic) });
         end();
     }
 
@@ -390,12 +421,11 @@ public class PdfFOTBuilder : FOTBuilder
     public override void externalGraphic(ExternalGraphicNIC nic)
     {
         start();
-        ApplyDisplayNIC(nic);
         AddNode(new PdfExternalGraphic(current_,
             nic.entitySystemId.ToString(),
             nic.isDisplay,
             nic.hasMaxWidth, nic.hasMaxWidth ? nic.maxWidth.length : 0,
-            nic.hasMaxHeight, nic.hasMaxHeight ? nic.maxHeight.length : 0));
+            nic.hasMaxHeight, nic.hasMaxHeight ? nic.maxHeight.length : 0) { Display = Display(nic) });
         end();
     }
 
@@ -411,12 +441,19 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void startTable(TableNIC nic)
     {
-        ApplyDisplayNIC(nic);
-        var table = new PdfTable(current_);
+        var table = new PdfTable(current_)
+        {
+            Display = Display(nic),
+            HasWidth = nic.widthType == TableNIC.WidthType.widthExplicit,
+            Width = nic.width.length
+        };
         AddNode(table);
         characteristicsStack_.Push(current_.Clone());
         tableStack_.Push((currentTable_, currentTableRow_, tablePartSection_));
         currentTable_ = table;
+        tableBaseChars_ = current_.Clone();
+        tableBaseLineThickness_ = lineThickness_;
+        borderCharacteristicsFresh_ = false;
     }
 
     public override void endTable()
@@ -453,7 +490,6 @@ public class PdfFOTBuilder : FOTBuilder
     public override void startTablePart(TablePartNIC nic,
         out FOTBuilder? header, out FOTBuilder? footer)
     {
-        ApplyDisplayNIC(nic);
         characteristicsStack_.Push(current_.Clone());
         tablePartSection_ = TablePartSection.Body;
         header = new TablePartPortProxy(this, TablePartSection.Header);
@@ -494,10 +530,26 @@ public class PdfFOTBuilder : FOTBuilder
         public override void tableCellAfterColumnBorder()  => parent_.tableCellAfterColumnBorder();
         public override void startParagraph(ParagraphNIC nic) => parent_.startParagraph(nic);
         public override void endParagraph() => parent_.endParagraph();
+        public override void paragraphBreak(ParagraphNIC nic) => parent_.paragraphBreak(nic);
+        public override void startDisplayGroup(DisplayGroupNIC nic) => parent_.startDisplayGroup(nic);
+        public override void endDisplayGroup() => parent_.endDisplayGroup();
+        public override void startBox(BoxNIC nic) => parent_.startBox(nic);
+        public override void endBox() => parent_.endBox();
         public override void startSequence() => parent_.startSequence();
         public override void endSequence() => parent_.endSequence();
+        public override void startLineField(LineFieldNIC nic) => parent_.startLineField(nic);
+        public override void endLineField() => parent_.endLineField();
+        public override void startLeader(LeaderNIC nic) => parent_.startLeader(nic);
+        public override void endLeader() => parent_.endLeader();
+        public override void startScore(Symbol type) => parent_.startScore(type);
+        public override void startScore(LengthSpec length) => parent_.startScore(length);
+        public override void startScore(uint c) => parent_.startScore(c);
+        public override void endScore() => parent_.endScore();
         public override void characters(uint[] data, nuint size) => parent_.characters(data, size);
         public override void rule(RuleNIC nic) => parent_.rule(nic);
+        public override void externalGraphic(ExternalGraphicNIC nic) => parent_.externalGraphic(nic);
+        public override void pageNumber() => parent_.pageNumber();
+        public override void currentNodePageNumber(NodePtr node) => parent_.currentNodePageNumber(node);
 
         // Forward characteristic setters
         public override void setFontSize(long size) => parent_.setFontSize(size);
@@ -511,8 +563,14 @@ public class PdfFOTBuilder : FOTBuilder
         public override void setEndIndent(LengthSpec i) => parent_.setEndIndent(i);
         public override void setFirstLineStartIndent(LengthSpec i) => parent_.setFirstLineStartIndent(i);
         public override void setLineSpacing(LengthSpec s) => parent_.setLineSpacing(s);
+        public override void setMinLeading(OptLengthSpec l) => parent_.setMinLeading(l);
         public override void setQuadding(Symbol q) => parent_.setQuadding(q);
+        public override void setDisplayAlignment(Symbol a) => parent_.setDisplayAlignment(a);
+        public override void setFieldWidth(LengthSpec w) => parent_.setFieldWidth(w);
+        public override void setFieldAlign(Symbol a) => parent_.setFieldAlign(a);
+        public override void setPositionPointShift(LengthSpec s) => parent_.setPositionPointShift(s);
         public override void setLineThickness(long t) => parent_.setLineThickness(t);
+        public override void setBorderPresent(bool b) => parent_.setBorderPresent(b);
         public override void setCellBeforeRowMargin(LengthSpec m) => parent_.setCellBeforeRowMargin(m);
         public override void setCellAfterRowMargin(LengthSpec m) => parent_.setCellAfterRowMargin(m);
         public override void setCellBeforeColumnMargin(LengthSpec m) => parent_.setCellBeforeColumnMargin(m);
@@ -526,8 +584,6 @@ public class PdfFOTBuilder : FOTBuilder
         public override void setLines(Symbol l) => parent_.setLines(l);
         public override void setInputWhitespaceTreatment(Symbol t) => parent_.setInputWhitespaceTreatment(t);
         public override void setScoreSpaces(bool b) => parent_.setScoreSpaces(b);
-        public override void startScore(Symbol type) => parent_.startScore(type);
-        public override void endScore() => parent_.endScore();
 
         // Extension characteristics: the setters resolve the proxy to its parent
         public override void extensionSet(Action<FOTBuilder, bool> func, bool arg) => func(parent_, arg);
@@ -536,6 +592,7 @@ public class PdfFOTBuilder : FOTBuilder
 
         public override void start() => parent_.start();
         public override void end() => parent_.end();
+        public override void atomic() => parent_.atomic();
     }
 
     public override void startTablePartHeader()
@@ -614,38 +671,70 @@ public class PdfFOTBuilder : FOTBuilder
         end();
     }
 
-    // Table border callbacks: tracked but not deeply modeled in Phase 1
-    public override void tableBeforeRowBorder() { }
-    public override void tableAfterRowBorder() { }
-    public override void tableBeforeColumnBorder() { }
-    public override void tableAfterColumnBorder() { }
-    public override void tableCellBeforeRowBorder()    => CaptureCellBorder(CellBorderPort.BeforeRow);
-    public override void tableCellAfterRowBorder()     => CaptureCellBorder(CellBorderPort.AfterRow);
-    public override void tableCellBeforeColumnBorder() => CaptureCellBorder(CellBorderPort.BeforeColumn);
-    public override void tableCellAfterColumnBorder()  => CaptureCellBorder(CellBorderPort.AfterColumn);
+    // The borders of the table and of its cells
+    private PdfCharacteristics? tableBaseChars_;
+    private long tableBaseLineThickness_;
 
-    private void CaptureCellBorder(CellBorderPort port)
+    public override void tableBeforeRowBorder()    => CaptureTableBorder(BorderPort.BeforeRow);
+    public override void tableAfterRowBorder()     => CaptureTableBorder(BorderPort.AfterRow);
+    public override void tableBeforeColumnBorder() => CaptureTableBorder(BorderPort.BeforeColumn);
+    public override void tableAfterColumnBorder()  => CaptureTableBorder(BorderPort.AfterColumn);
+    public override void tableCellBeforeRowBorder()    => CaptureCellBorder(BorderPort.BeforeRow);
+    public override void tableCellAfterRowBorder()     => CaptureCellBorder(BorderPort.AfterRow);
+    public override void tableCellBeforeColumnBorder() => CaptureCellBorder(BorderPort.BeforeColumn);
+    public override void tableCellAfterColumnBorder()  => CaptureCellBorder(BorderPort.AfterColumn);
+
+    // The border the port defines, or null when the stylesheet set nothing for it or said
+    // border-present?: #f
+    private PdfBorder? TakeBorder()
     {
-        // Only capture if the DSSSL actually defined this border (setColor/setLineThickness
-        // were called by the engine between last capture and this callback).
-        if (!borderCharacteristicsFresh_) return;
+        if (!borderCharacteristicsFresh_) return null;
         borderCharacteristicsFresh_ = false;
-
-        var cell = FindEnclosingCell();
-        if (cell == null) return;
-        var border = new PdfCellBorder
+        var present = borderPresent_;
+        borderPresent_ = true;
+        if (!present) return null;
+        return new PdfBorder
         {
             LineThickness = lineThickness_,
             ColorR = current_.ColorR,
             ColorG = current_.ColorG,
             ColorB = current_.ColorB
         };
-        switch (port)
+    }
+
+    private void CaptureTableBorder(BorderPort port)
+    {
+        var border = TakeBorder();
+        if (currentTable_ != null && border != null)
         {
-            case CellBorderPort.BeforeRow:    cell.BeforeRowBorder    = border; break;
-            case CellBorderPort.AfterRow:     cell.AfterRowBorder     = border; break;
-            case CellBorderPort.BeforeColumn: cell.BeforeColumnBorder = border; break;
-            case CellBorderPort.AfterColumn:  cell.AfterColumnBorder  = border; break;
+            switch (port)
+            {
+                case BorderPort.BeforeRow:    currentTable_.BeforeRowBorder    = border; break;
+                case BorderPort.AfterRow:     currentTable_.AfterRowBorder     = border; break;
+                case BorderPort.BeforeColumn: currentTable_.BeforeColumnBorder = border; break;
+                case BorderPort.AfterColumn:  currentTable_.AfterColumnBorder  = border; break;
+            }
+        }
+        if (tableBaseChars_ != null)
+        {
+            current_ = tableBaseChars_.Clone();
+            lineThickness_ = tableBaseLineThickness_;
+        }
+    }
+
+    private void CaptureCellBorder(BorderPort port)
+    {
+        var border = TakeBorder();
+        var cell = FindEnclosingCell();
+        if (cell != null && border != null)
+        {
+            switch (port)
+            {
+                case BorderPort.BeforeRow:    cell.BeforeRowBorder    = border; break;
+                case BorderPort.AfterRow:     cell.AfterRowBorder     = border; break;
+                case BorderPort.BeforeColumn: cell.BeforeColumnBorder = border; break;
+                case BorderPort.AfterColumn:  cell.AfterColumnBorder  = border; break;
+            }
         }
 
         // Restore pre-border state — the engine's style pop doesn't revert FOT builder state,
@@ -657,28 +746,25 @@ public class PdfFOTBuilder : FOTBuilder
         }
     }
 
-    // ==================== Extension flow objects (Phase 2) ====================
+    // ==================== Extension flow objects ====================
 
     public override void extension(ExtensionFlowObj fo, NodePtr currentNode)
     {
-        // Phase 2: dispatch to PDF-specific extension flow objects
     }
 
     public override void startExtension(ExtensionFlowObj fo, NodePtr currentNode,
         System.Collections.Generic.List<FOTBuilder> fotbs)
     {
-        // Phase 2
     }
 
     public override void endExtension(ExtensionFlowObj fo)
     {
-        // Phase 2
     }
 
-    // Extension characteristics, declared in a style sheet with
-    //   (declare-characteristic tab-stops "UNREGISTERED::Dazzle//Characteristic::tab-stops" "")
-    // and then specified like any inherited characteristic. A style sheet that does not declare
-    // them gets the behaviour of earlier versions.
+    // Extension characteristics, for what DSSSL has no characteristic for; declared in a style
+    // sheet with
+    //   (declare-characteristic min-row-height "UNREGISTERED::Dazzle//Characteristic::min-row-height" 0pt)
+    // and then specified like any inherited characteristic.
     public const string CharacteristicPrefix = "UNREGISTERED::Dazzle//Characteristic::";
 
     // The setter receives the builder the engine is talking to, which may be a port proxy.
@@ -689,23 +775,7 @@ public class PdfFOTBuilder : FOTBuilder
     {
         return new[]
         {
-            // "<position>[:<alignment>[:<leader>]] …", see PdfRenderer.ParseTabStops
-            new FOTBuilder.ExtensionTableEntry
-            {
-                pubid = CharacteristicPrefix + "tab-stops",
-                stringSetter = (fotb, s) =>
-                {
-                    var text = s.ToString();
-                    Of(fotb).current_.TabStops = string.IsNullOrWhiteSpace(text) ? null : text;
-                }
-            },
-            // line-spacing as the exact distance of the lines, not as a minimum
-            new FOTBuilder.ExtensionTableEntry
-            {
-                pubid = CharacteristicPrefix + "line-spacing-exact?",
-                boolSetter = (fotb, b) => Of(fotb).current_.LineSpacingExact = b
-            },
-            // height of a table-row: at least, or exactly (0 = from its content)
+            // the height of a table-row: at least, or exactly (0 = from its content)
             new FOTBuilder.ExtensionTableEntry
             {
                 pubid = CharacteristicPrefix + "min-row-height",
@@ -715,13 +785,6 @@ public class PdfFOTBuilder : FOTBuilder
             {
                 pubid = CharacteristicPrefix + "row-height",
                 lengthSetter = (fotb, n) => Of(fotb).current_.RowHeight = n
-            },
-            // the cell margins are the whole distance between cell edge and content; without it the
-            // renderer keeps its own padding of 1.2 mm left and right in addition
-            new FOTBuilder.ExtensionTableEntry
-            {
-                pubid = CharacteristicPrefix + "exact-cell-margins?",
-                boolSetter = (fotb, b) => Of(fotb).current_.ExactCellMargins = b
             }
         };
     }
@@ -761,11 +824,18 @@ public class PdfFOTBuilder : FOTBuilder
     public override void setEndIndent(LengthSpec indent) => current_.EndIndent = indent.length;
     public override void setFirstLineStartIndent(LengthSpec indent) => current_.FirstLineStartIndent = indent.length;
 
-    // Spacing
+    // Lines
     public override void setLineSpacing(LengthSpec spacing) => current_.LineSpacing = spacing.length;
+    public override void setMinLeading(OptLengthSpec leading) =>
+        current_.MinLeading = leading.hasLength ? leading.length.length : null;
 
     // Alignment
     public override void setQuadding(Symbol quadding) => current_.Quadding = quadding;
+    public override void setDisplayAlignment(Symbol alignment) => current_.DisplayAlignment = alignment;
+
+    // Line fields
+    public override void setFieldWidth(LengthSpec width) => current_.FieldWidth = width.length;
+    public override void setFieldAlign(Symbol align) => current_.FieldAlign = align;
 
     // Page dimensions
     public override void setPageWidth(long width) => current_.PageWidth = width;
@@ -774,6 +844,8 @@ public class PdfFOTBuilder : FOTBuilder
     public override void setRightMargin(long margin) => current_.RightMargin = margin;
     public override void setTopMargin(long margin) => current_.TopMargin = margin;
     public override void setBottomMargin(long margin) => current_.BottomMargin = margin;
+    public override void setHeaderMargin(long margin) => current_.HeaderMargin = margin;
+    public override void setFooterMargin(long margin) => current_.FooterMargin = margin;
 
     // Verbatim/whitespace
     public override void setLines(Symbol lines) => current_.Lines = lines;
@@ -794,26 +866,17 @@ public class PdfFOTBuilder : FOTBuilder
     // Page number format
     public override void setPageNumberFormat(StringC format) => current_.PageNumberFormat = format.ToString();
 
-    // Score: 'after is an underline. MigraDoc has no overline or strike-through, so 'before,
-    // 'through, a length and a character are scored as nothing.
-    public override void startScore(Symbol type)
-    {
-        start();
-        if (type == Symbol.symbolAfter)
-            current_.Underline = true;
-    }
-
-    public override void setScoreSpaces(bool score) => current_.ScoreSpaces = score;
-
     // ==================== Helpers ====================
 
-    private void ApplyDisplayNIC(FOTBuilder.DisplayNIC nic)
+    private static PdfDisplay Display(FOTBuilder.DisplayNIC nic) => new()
     {
-        current_.SpaceBefore = nic.spaceBefore.nominal.length;
-        current_.SpaceAfter = nic.spaceAfter.nominal.length;
-        current_.KeepWithNext = nic.keepWithNext;
-        current_.KeepWithPrevious = nic.keepWithPrevious;
-        current_.BreakBefore = nic.breakBefore;
-        current_.BreakAfter = nic.breakAfter;
-    }
+        SpaceBefore = nic.spaceBefore.nominal.length,
+        SpaceBeforeConditional = nic.spaceBefore.conditional,
+        SpaceAfter = nic.spaceAfter.nominal.length,
+        SpaceAfterConditional = nic.spaceAfter.conditional,
+        KeepWithNext = nic.keepWithNext,
+        KeepWithPrevious = nic.keepWithPrevious,
+        BreakBefore = nic.breakBefore == Symbol.symbolPage,
+        BreakAfter = nic.breakAfter == Symbol.symbolPage
+    };
 }

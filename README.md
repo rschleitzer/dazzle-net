@@ -58,11 +58,46 @@ DSSSL usable as a code generator.
 
 ## PDF
 
-The PDF backend renders the flow object tree with
-[PDFsharp/MigraDoc](https://www.nuget.org/packages/PDFsharp-MigraDoc). It is
-rudimentary: page sequences with headers and footers, paragraphs, display
-groups, leaders and tables — enough to set a book with the DocBook print
-stylesheets, and not more.
+The PDF backend sets the pages itself and writes them with
+[PDFsharp](https://www.nuget.org/packages/PDFsharp), the way the PDF backend
+of the Scaly port of OpenJade does: blocks flow down the page, paragraphs are
+broken into lines, tables are set row by row, and the flow object tree is laid
+out twice so that `current-node-page-number-sosofo` knows its page. It sets
+simple page sequences with headers and footers, paragraphs and
+`paragraph-break`, display groups, boxes, line fields, leaders, `score`, rules,
+external graphics and tables (spanned columns and rows, borders of the table
+and its cells, header rows again on every page, tables in cells) — enough to set
+a book with the DocBook print stylesheets.
+
+The characteristics mean what ISO/IEC 10179 says, as the RTF backend of Jade has
+them:
+
+- `line-spacing` is the distance of the lines: exactly that with `min-leading: #f`
+  (the initial value), at least that and the height of the line's text plus
+  `min-leading` otherwise;
+- display space collapses to the larger of the space after one block and the
+  space before the next, and `conditional?` space is dropped at the start of an
+  area — the top of a page, a table cell;
+- the cell margins are the distance between the edges of a cell and its content;
+- `score` draws its line after (`'after`), through or before the text, or at a
+  length below it, over the spaces only with `score-spaces?: #t`;
+- `input-whitespace-treatment: 'preserve` keeps every space, and where `lines:`
+  wraps a line still breaks at them; a tab goes to the next multiple of 36pt;
+- a line breaks at a space, after a soft hyphen (which then shows) and after a
+  hyphen between letters;
+- a cell is placed in the column after the previous cell of its row unless its
+  `column-number` says otherwise, also under a cell spanning rows.
+
+One deviation: the initial `input-whitespace-treatment` is `'collapse`, not
+`'preserve`.
+
+Header and footer parts are set as blocks across the width of the page body,
+`center-` and `right-` parts aligned to the middle and the end; they stand at
+`header-margin` from the top and `footer-margin` from the bottom of the page,
+and without these in the middle of the margin.
+
+The fonts come from PDFsharp's font resolver: the one the program sets in
+`GlobalFontSettings.FontResolver`, else the system's fonts.
 
 From a program:
 
@@ -77,45 +112,25 @@ byte[] pdf = DssslProcessor.GeneratePdfBytes("document.xml", "stylesheet.dsl");
 A third overload writes to a `Stream`. All take an optional path to an SGML
 catalog; without one the bundled catalog is used.
 
-Beyond the basics the backend sets `score` with `type: 'after` as an underline
-(`score-spaces?: #f` underlines the words only; MigraDoc has no overline or
-strike-through), negative indents, a tab character in text with
-`input-whitespace-treatment: 'preserve`, preserved runs of spaces that still
-break where `lines:` wraps, leaders in table cells, and cell margins the way
-the RTF backend of Jade adds them to the paragraphs of the cell. A table in a
-table cell, which MigraDoc cannot nest, is set as its cells one after another.
-
 ### Extension characteristics
 
-What DSSSL has no characteristic for, the backend takes as extension
-characteristics. A stylesheet declares the ones it uses and then specifies
-them like any inherited characteristic; one that does not declare them gets
-the behaviour of earlier versions.
+DSSSL has no height for a table row. The backend takes it as an extension
+characteristic, which a stylesheet declares and then specifies on a
+`table-row` (or anything around it):
 
 ```scheme
-(declare-characteristic tab-stops
-  "UNREGISTERED::Dazzle//Characteristic::tab-stops" "")
-(declare-characteristic line-spacing-exact?
-  "UNREGISTERED::Dazzle//Characteristic::line-spacing-exact?" #f)
 (declare-characteristic min-row-height
   "UNREGISTERED::Dazzle//Characteristic::min-row-height" 0pt)
 (declare-characteristic row-height
   "UNREGISTERED::Dazzle//Characteristic::row-height" 0pt)
-(declare-characteristic exact-cell-margins?
-  "UNREGISTERED::Dazzle//Characteristic::exact-cell-margins?" #f)
 
-(make paragraph
-  tab-stops: "100pt 280pt:center:dots 15cm:end:lines"
-  ...)
+(make table-row min-row-height: 20pt ...)
 ```
 
 | Characteristic | Value | Meaning |
 |---|---|---|
-| `tab-stops` | string | tab stops of a paragraph, separated by white space, each `position[:alignment[:leader]]`; the position with the unit `pt`, `mm`, `cm` or `in`, the alignment `start`, `end`, `center` or `decimal`, the leader `none`, `dots`, `dashes`, `lines`, `heavy` or `middle-dots` |
-| `line-spacing-exact?` | boolean | `line-spacing` is the exact distance of the lines, also below the size of the font; otherwise it is a minimum |
 | `min-row-height` | length | a `table-row` is at least this high |
 | `row-height` | length | a `table-row` is exactly this high |
-| `exact-cell-margins?` | boolean | on a `table`: the cell margins are the whole distance between the edge of a cell and its content; otherwise MigraDoc pads every cell by 1.2 mm left and right in addition |
 
 ## License
 
