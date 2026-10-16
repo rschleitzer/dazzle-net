@@ -245,6 +245,7 @@ internal sealed class PdfLayout
         public double Height;
         public bool Breakable;
         public bool Stretches;            // a space that justification widens
+        public bool Holds;                // a zero width space: the line is there
     }
 
     private readonly List<Atom> atoms_ = new();
@@ -456,17 +457,17 @@ internal sealed class PdfLayout
                         break;
                     atoms_.Add(new Atom { Kind = AtomKind.Space, Chars = c, Font = font, Width = fonts_.Width(" ", font), Breakable = !verbatim || c.Wraps, Stretches = true });
                     break;
-                case '​':
+                case '\u200B':
                     Word();
-                    atoms_.Add(new Atom { Kind = AtomKind.Space, Chars = c, Font = font, Width = 0, Breakable = true });
+                    atoms_.Add(new Atom { Kind = AtomKind.Space, Chars = c, Font = font, Width = 0, Breakable = true, Holds = true });
                     break;
-                case '­':
+                case '\u00AD':
                     Word();
                     atoms_.Add(new Atom { Kind = AtomKind.SoftHyphen, Chars = c, Font = font, Width = fonts_.Width("-", font) });
                     break;
-                case '‌':
-                case '‍':
-                case '﻿':
+                case '\u200C':
+                case '\u200D':
+                case '\uFEFF':
                     break;
                 case '-' when word.Length > 0 && char.IsLetter(word[^1]):
                     // after a hyphen between letters the line may break, as in a compound word
@@ -549,7 +550,7 @@ internal sealed class PdfLayout
         {
             var k = atoms_[i].Kind;
             if (k is AtomKind.Text or AtomKind.Image or AtomKind.Leader or AtomKind.Newline or AtomKind.Tab
-                || k == AtomKind.Space && atoms_[i].Chars.Verbatim)
+                || k == AtomKind.Space && (atoms_[i].Chars.Verbatim || atoms_[i].Holds))
             {
                 pc ??= atoms_[i].Chars;
                 visible = true;
@@ -572,12 +573,9 @@ internal sealed class PdfLayout
             var indent = Pt(p.StartIndent) + (paraFirst_ ? Pt(p.FirstLineStartIndent) : 0);
             var available = area_.Width - indent - Pt(p.EndIndent);
             // a line does not begin with a space, outside verbatim text
-            if (!p.Verbatim)
-            {
-                while (from < end && atoms_[from].Kind == AtomKind.Space)
-                    from++;
-                if (from >= end) break;
-            }
+            while (from < end && atoms_[from].Kind == AtomKind.Space && !atoms_[from].Chars.Verbatim && !atoms_[from].Holds)
+                from++;
+            if (from >= end) break;
             int to = from, next = -1;
             int breakAt = -1, breakNext = -1;
             bool ended = false;
