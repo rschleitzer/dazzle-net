@@ -165,6 +165,8 @@ internal sealed class PdfLayout
         area_.Ops = new List<Op>();
         area_.AtTop = true;
         area_.PendingConditional = 0;
+        area_.Top = PageTop;
+        area_.Bottom = PageBottom;
         area_.Y = area_.Top;
         area_.KeepAt = -1;
         fixedOps_ = 0;
@@ -177,12 +179,23 @@ internal sealed class PdfLayout
         }
     }
 
+    // The body of the page: on the first page of a sequence first-page-top-margin and
+    // first-page-bottom-margin where they are given
+    private double PageTop
+    {
+        get
+        {
+            var c = seq_!.Characteristics;
+            return Pt(seqFirst_ && c.FirstPageTopMargin > 0 ? c.FirstPageTopMargin : c.TopMargin);
+        }
+    }
+
     private double PageBottom
     {
         get
         {
             var c = seq_!.Characteristics;
-            return Pt(c.PageHeight - c.BottomMargin);
+            return Pt(c.PageHeight - (seqFirst_ && c.FirstPageBottomMargin > 0 ? c.FirstPageBottomMargin : c.BottomMargin));
         }
     }
 
@@ -1192,9 +1205,11 @@ internal sealed class PdfLayout
         for (int r = 0; r < rows.Count; r++)
         {
             // the characteristics of a table-row reach the FOT builder with its cells (the engine
-            // pushes the row's style for every cell), so the row is as high as its cells ask
-            var asked = rows[r].Children.OfType<PdfTableCell>().Select(cell => cell.Characteristics)
-                .Append(rows[r].Characteristics).ToList();
+            // pushes the row's style for every cell), so the row is as high as its cells ask; the
+            // row node itself carries the characteristics around it (in a table in a cell those of
+            // the outer row), which count only for a row without cells
+            var asked = rows[r].Children.OfType<PdfTableCell>().Select(cell => cell.Characteristics).ToList();
+            if (asked.Count == 0) asked.Add(rows[r].Characteristics);
             var h = boxes.Where(b => b.Row == r && b.RowSpan == 1).Select(b => b.Height).DefaultIfEmpty(0).Max();
             var rowHeight = asked.Max(rc => rc.RowHeight);
             if (rowHeight > 0) { h = Pt(rowHeight); exact[r] = true; }

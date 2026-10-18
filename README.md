@@ -101,7 +101,10 @@ them:
   overflows it, and a hyphen between letters is a break also where the letters
   are in different runs;
 - `break-before: 'column` and `break-after: 'column` go on in the next column of
-  a column set (below), and outside one on a new page.
+  a column set (below), and outside one on a new page;
+- a table row is as high as its cells ask: the style of a `table-row` reaches the
+  backend with its cells, and a table in a cell does not take on the height of
+  the row around it.
 
 One deviation: the initial `input-whitespace-treatment` is `'collapse`, not
 `'preserve`.
@@ -165,6 +168,8 @@ characteristic, which a stylesheet declares and then specifies on a
 | `row-height` | length | a `table-row` is exactly this high |
 | `column-set` | string | the columns a `display-group` sets its content in |
 | `balance-columns?` | boolean | the columns of the group's last page are made equally long |
+| `first-page-top-margin` | length | the top margin of the first page of a `simple-page-sequence` (0pt: as the others) |
+| `first-page-bottom-margin` | length | its bottom margin (0pt: as the others) |
 
 DSSSL sets columns in the column-set page model, which the backend does not
 have. A `display-group` that specifies `column-set` sets its content in columns

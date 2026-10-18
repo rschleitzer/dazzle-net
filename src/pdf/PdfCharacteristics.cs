@@ -90,6 +90,10 @@ public class PdfCharacteristics
     public string? ColumnSet { get; set; } = null;
     public bool BalanceColumns { get; set; } = false;
     public bool ColumnSetHere { get; set; } = false;
+    // first-page-top-margin and first-page-bottom-margin of a simple-page-sequence: the margins of
+    // its first page where they differ from the others (0: as the others)
+    public long FirstPageTopMargin { get; set; } = 0;
+    public long FirstPageBottomMargin { get; set; } = 0;
 
     public PdfCharacteristics Clone()
     {

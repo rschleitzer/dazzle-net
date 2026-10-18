@@ -851,6 +851,18 @@ public class PdfFOTBuilder : FOTBuilder
             {
                 pubid = CharacteristicPrefix + "balance-columns?",
                 boolSetter = (fotb, v) => Of(fotb).current_.BalanceColumns = v
+            },
+            // the margins of the first page of a simple-page-sequence where they differ from the
+            // others, as a word processor's taller header on a title page pushes the text down
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "first-page-top-margin",
+                lengthSetter = (fotb, n) => Of(fotb).current_.FirstPageTopMargin = n
+            },
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "first-page-bottom-margin",
+                lengthSetter = (fotb, n) => Of(fotb).current_.FirstPageBottomMargin = n
             }
         };
     }
