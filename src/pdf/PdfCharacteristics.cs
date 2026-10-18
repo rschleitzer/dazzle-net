@@ -32,6 +32,9 @@ public class PdfCharacteristics
     // value), at least that and the height of the line's content plus min-leading otherwise
     public long LineSpacing { get; set; } = 12000;
     public long? MinLeading { get; set; } = null;
+    // min-post-line-spacing: the space below the placement path of a line is at least this, the
+    // rest of the line's height is above (#f: the descent of its text, the rest above)
+    public long? MinPostLineSpacing { get; set; } = null;
 
     // Alignment
     public Symbol Quadding { get; set; } = Symbol.symbolStart;
@@ -82,6 +85,11 @@ public class PdfCharacteristics
     // Dazzle extension characteristics (see PdfFOTBuilder.GetExtensions)
     public long MinRowHeight { get; set; } = 0;
     public long RowHeight { get; set; } = 0;
+    // column-set and balance-columns?: what a display-group sets up its columns with; ColumnSetHere
+    // says that the flow object being started specified column-set itself, not inherited it
+    public string? ColumnSet { get; set; } = null;
+    public bool BalanceColumns { get; set; } = false;
+    public bool ColumnSetHere { get; set; } = false;
 
     public PdfCharacteristics Clone()
     {

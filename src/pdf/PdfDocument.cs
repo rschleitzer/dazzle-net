@@ -32,6 +32,8 @@ public class PdfDisplay
     public bool KeepWithPrevious;
     public bool BreakBefore;
     public bool BreakAfter;
+    public bool BreakBeforeColumn;
+    public bool BreakAfterColumn;
 }
 
 // Container node that can hold child nodes
@@ -69,6 +71,12 @@ public class PdfParagraph : PdfContainerNode
 // Display group or display box: vertical container for block-level content
 public class PdfDisplayGroup : PdfContainerNode
 {
+    // A column set (the extension characteristic column-set specified on this group): the start of
+    // every column from the start of the area and its width, in points; null for an ordinary group
+    public double[]? ColumnX;
+    public double[]? ColumnWidth;
+    public bool BalanceColumns;
+
     public PdfDisplayGroup(PdfCharacteristics characteristics) : base(characteristics) { }
 }
 

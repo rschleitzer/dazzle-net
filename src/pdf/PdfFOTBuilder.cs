@@ -58,6 +58,7 @@ public class PdfFOTBuilder : FOTBuilder
     private void Open(PdfContainerNode node)
     {
         AddNode(node);
+        current_.ColumnSetHere = false;
         characteristicsStack_.Push(current_.Clone());
         containerStack_.Push(node);
     }
@@ -185,7 +186,15 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void startDisplayGroup(DisplayGroupNIC nic)
     {
-        Open(new PdfDisplayGroup(current_) { Display = Display(nic) });
+        var group = new PdfDisplayGroup(current_) { Display = Display(nic) };
+        if (current_.ColumnSetHere && ParseColumnSet(current_.ColumnSet) is { } columns)
+        {
+            group.ColumnX = columns.X;
+            group.ColumnWidth = columns.Width;
+            group.BalanceColumns = current_.BalanceColumns;
+        }
+        // what the group contains does not set up the columns again (Open forgets that it was here)
+        Open(group);
     }
 
     public override void endDisplayGroup() => Close();
@@ -600,6 +609,7 @@ public class PdfFOTBuilder : FOTBuilder
         public override void setFirstLineStartIndent(LengthSpec i) => parent_.setFirstLineStartIndent(i);
         public override void setLineSpacing(LengthSpec s) => parent_.setLineSpacing(s);
         public override void setMinLeading(OptLengthSpec l) => parent_.setMinLeading(l);
+        public override void setMinPostLineSpacing(OptLengthSpec s) => parent_.setMinPostLineSpacing(s);
         public override void setQuadding(Symbol q) => parent_.setQuadding(q);
         public override void setDisplayAlignment(Symbol a) => parent_.setDisplayAlignment(a);
         public override void setFieldWidth(LengthSpec w) => parent_.setFieldWidth(w);
@@ -821,8 +831,53 @@ public class PdfFOTBuilder : FOTBuilder
             {
                 pubid = CharacteristicPrefix + "row-height",
                 lengthSetter = (fotb, n) => Of(fotb).current_.RowHeight = n
+            },
+            // the columns a display-group sets its content in: the start of the first column from the
+            // start of the area and its width, then for every further column the gap before it and its
+            // width, in points ("0 240 14 241"); the content flows down a column, then into the next,
+            // and from the last into the first of the next page
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "column-set",
+                stringSetter = (fotb, s) =>
+                {
+                    var b = Of(fotb);
+                    b.current_.ColumnSet = s.ToString();
+                    b.current_.ColumnSetHere = true;
+                }
+            },
+            // whether the columns of the group's last page are made equally long
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "balance-columns?",
+                boolSetter = (fotb, v) => Of(fotb).current_.BalanceColumns = v
             }
         };
+    }
+
+    // The columns of a column-set, or null where it does not say at least one column of a width
+    private static (double[] X, double[] Width)? ParseColumnSet(string? set)
+    {
+        if (set == null) return null;
+        var parts = set.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || parts.Length % 2 != 0) return null;
+        var numbers = new double[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+            if (!double.TryParse(parts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out numbers[i]))
+                return null;
+        int n = parts.Length / 2;
+        var x = new double[n];
+        var w = new double[n];
+        double at = numbers[0];
+        for (int k = 0; k < n; k++)
+        {
+            if (k > 0) at += numbers[2 * k];
+            x[k] = at;
+            w[k] = numbers[2 * k + 1];
+            if (w[k] <= 0) return null;
+            at += w[k];
+        }
+        return (x, w);
     }
 
     // ==================== Characteristics (set* methods) ====================
@@ -864,6 +919,8 @@ public class PdfFOTBuilder : FOTBuilder
     public override void setLineSpacing(LengthSpec spacing) => current_.LineSpacing = spacing.length;
     public override void setMinLeading(OptLengthSpec leading) =>
         current_.MinLeading = leading.hasLength ? leading.length.length : null;
+    public override void setMinPostLineSpacing(OptLengthSpec spacing) =>
+        current_.MinPostLineSpacing = spacing.hasLength ? spacing.length.length : null;
 
     // Alignment
     public override void setQuadding(Symbol quadding) => current_.Quadding = quadding;
@@ -913,6 +970,8 @@ public class PdfFOTBuilder : FOTBuilder
         KeepWithNext = nic.keepWithNext,
         KeepWithPrevious = nic.keepWithPrevious,
         BreakBefore = nic.breakBefore == Symbol.symbolPage,
-        BreakAfter = nic.breakAfter == Symbol.symbolPage
+        BreakAfter = nic.breakAfter == Symbol.symbolPage,
+        BreakBeforeColumn = nic.breakBefore == Symbol.symbolColumn,
+        BreakAfterColumn = nic.breakAfter == Symbol.symbolColumn
     };
 }

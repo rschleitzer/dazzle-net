@@ -86,6 +86,34 @@ internal sealed class PdfLayout
     private int pageNo_;
     private int fixedOps_;                    // ops in front of which nothing is moved
 
+    // A column set being set (a display-group with column-set): the body of the page is one of its
+    // columns at a time. Where a column is full, the next one begins at the top of the set on the
+    // same page; after the last, the first on the next page.
+    private sealed class ColumnSet
+    {
+        public int Index;                     // in the order the sets begin in the document
+        public double[] X = null!, Width = null!;
+        public double OuterX, OuterWidth;     // the area outside the set
+        public bool Balance;
+        public int Column;
+        public double Top;                    // of the set on the page being set
+        public double[] Ends = null!;         // where each column ends on that page
+        public bool HardBreak;                // a column break on that page
+    }
+    private ColumnSet? columns_;
+    private int columnSets_;
+
+    /// <summary>
+    /// Where a column set ended: the page (from 1), the top of the set on it and where each column
+    /// ends there; whether it is to be balanced and had a column break on that page.
+    /// </summary>
+    public sealed record ColumnSetEnd(int Page, double Top, double[] Ends, bool Balance, bool HardBreak);
+    public List<ColumnSetEnd> ColumnSetEnds { get; } = new();
+
+    // How long the columns but the last may be on the last page of a set that is balanced, by the
+    // index of the set: found by the renderer over several layouts
+    private readonly IReadOnlyDictionary<int, (int Page, double Height)> balance_;
+
     // The page sequence being set
     private PdfPageSequence? seq_;
     private bool seqFirst_;
@@ -94,11 +122,13 @@ internal sealed class PdfLayout
     private int? hfPage_;
 
     public PdfLayout(Dictionary<string, int> knownPages, PdfFontCache fonts,
-        Func<string, (double Width, double Height)?> imageSize)
+        Func<string, (double Width, double Height)?> imageSize,
+        IReadOnlyDictionary<int, (int Page, double Height)>? balance = null)
     {
         knownPages_ = knownPages;
         fonts_ = fonts;
         imageSize_ = imageSize;
+        balance_ = balance ?? new Dictionary<int, (int, double)>();
     }
 
     public void Run(List<PdfPageSequence> sequences)
@@ -109,6 +139,7 @@ internal sealed class PdfLayout
             if (pageOpen_) EmitPage();
             seq_ = seq;
             seqFirst_ = true;
+            columns_ = null;
             var c = seq.Characteristics;
             area_ = new Area
             {
@@ -137,6 +168,108 @@ internal sealed class PdfLayout
         area_.Y = area_.Top;
         area_.KeepAt = -1;
         fixedOps_ = 0;
+        if (columns_ is { } set)
+        {
+            set.Top = area_.Top;
+            set.Ends = Enumerable.Repeat(set.Top, set.X.Length).ToArray();
+            set.HardBreak = false;
+            EnterColumn(0);
+        }
+    }
+
+    private double PageBottom
+    {
+        get
+        {
+            var c = seq_!.Characteristics;
+            return Pt(c.PageHeight - c.BottomMargin);
+        }
+    }
+
+    // The body of the page becomes column k of the set from its top on this page; on the last page of
+    // a set that is balanced, the columns but the last end where the balance says
+    private void EnterColumn(int k)
+    {
+        var set = columns_!;
+        var a = area_;
+        set.Column = k;
+        a.X = set.OuterX + set.X[k];
+        a.Width = set.Width[k];
+        a.Y = set.Top;
+        a.Bottom = PageBottom;
+        if (k < set.X.Length - 1 && balance_.TryGetValue(set.Index, out var limit) && limit.Page == Pages.Count + 1)
+            a.Bottom = Math.Min(a.Bottom, set.Top + limit.Height);
+    }
+
+    // On to the next column of the set on this page; false after the last
+    private bool NextColumn()
+    {
+        var set = columns_;
+        if (set == null || set.Column + 1 >= set.X.Length) return false;
+        set.Ends[set.Column] = area_.Y;
+        EnterColumn(set.Column + 1);
+        area_.AtTop = true;
+        area_.PendingConditional = 0;
+        area_.KeepAt = -1;
+        fixedOps_ = area_.Ops.Count;
+        return true;
+    }
+
+    // A column break: the next column, after the last the next page; outside a column set the next page
+    private void ColumnBreak()
+    {
+        if (area_.NoBreak) return;
+        if (columns_ == null)
+        {
+            if (pageOpen_ && !area_.AtTop) EmitPage();
+            return;
+        }
+        if (!pageOpen_) OpenPage();
+        if (NextColumn())
+            columns_.HardBreak = true;
+        else
+        {
+            EmitPage();
+            OpenPage();
+        }
+    }
+
+    // A display-group with column-set: its content is set into the columns, the set begins where the
+    // group begins and ends below its longest column on the page it ends on
+    private void FlowColumnSet(PdfDisplayGroup group)
+    {
+        var a = area_;
+        var set = new ColumnSet
+        {
+            Index = columnSets_++, X = group.ColumnX!, Width = group.ColumnWidth!, Balance = group.BalanceColumns,
+            OuterX = a.X, OuterWidth = a.Width
+        };
+        columns_ = set;
+        // the space before the set (after the block before it) is above all of its columns
+        if (pageOpen_)
+        {
+            a.Y += PendingSpace(a);
+            a.PendingConditional = a.PendingFixed = 0;
+        }
+        set.Top = pageOpen_ ? a.Y : a.Top;
+        set.Ends = Enumerable.Repeat(set.Top, set.X.Length).ToArray();
+        bool atTop = a.AtTop;
+        EnterColumn(0);
+        a.AtTop = atTop;
+        a.KeepAt = -1;
+        fixedOps_ = a.Ops.Count;
+        FlowChildren(group.Children, null, group.Display.KeepWithNext);
+        set.Ends[set.Column] = a.Y;
+        var end = set.Ends.Max();
+        ColumnSetEnds.Add(new ColumnSetEnd(pageOpen_ ? Pages.Count + 1 : -1, set.Top, set.Ends.ToArray(), set.Balance, set.HardBreak));
+        columns_ = null;
+        a.X = set.OuterX;
+        a.Width = set.OuterWidth;
+        a.Bottom = PageBottom;
+        a.Y = end;
+        if (end > set.Top + 0.001) a.AtTop = false;
+        a.KeepAt = -1;
+        fixedOps_ = a.Ops.Count;
     }
 
     private void EmitPage()
@@ -165,28 +298,33 @@ internal sealed class PdfLayout
         area_.KeepAt = -1;
     }
 
-    // The page is full: write it and go on on a new one. What must stay with the block being
-    // set goes along, unless that is half a page.
+    // The page (or the column) is full: write it and go on on a new one (in the next column). What
+    // must stay with the block being set goes along, unless that is half a page.
     private void NewPage()
     {
         var a = area_;
         List<Op>? moved = null;
-        double fromY = a.KeepY, oldY = a.Y;
-        if (a.KeepAt >= fixedOps_ && a.KeepAt < a.Ops.Count && fromY > a.Top
-            && (oldY - fromY) * 2 < a.Bottom - a.Top)
+        double fromY = a.KeepY, oldY = a.Y, oldX = a.X;
+        double top = columns_?.Top ?? a.Top;
+        if (a.KeepAt >= fixedOps_ && a.KeepAt < a.Ops.Count && fromY > top
+            && (oldY - fromY) * 2 < a.Bottom - top)
         {
             moved = a.Ops.GetRange(a.KeepAt, a.Ops.Count - a.KeepAt);
             a.Ops.RemoveRange(a.KeepAt, a.Ops.Count - a.KeepAt);
         }
-        EmitPage();
-        OpenPage();
+        if (!NextColumn())
+        {
+            EmitPage();
+            OpenPage();
+        }
         if (moved != null)
         {
+            var newTop = a.Y;
             a.KeepAt = a.Ops.Count;
-            a.KeepY = a.Top;
-            foreach (var op in moved) op.Shift(0, a.Top - fromY);
+            a.KeepY = newTop;
+            foreach (var op in moved) op.Shift(a.X - oldX, newTop - fromY);
             a.Ops.AddRange(moved);
-            a.Y = a.Top + (oldY - fromY);
+            a.Y = newTop + (oldY - fromY);
             a.AtTop = false;
         }
     }
@@ -232,6 +370,8 @@ internal sealed class PdfLayout
     {
         if (d.BreakBefore && pageOpen_ && !area_.AtTop && !area_.NoBreak)
             EmitPage();
+        else if (d.BreakBeforeColumn)
+            ColumnBreak();
         AddPending(area_, d.SpaceBefore, d.SpaceBeforeConditional);
     }
 
@@ -240,6 +380,8 @@ internal sealed class PdfLayout
         AddPending(area_, d.SpaceAfter, d.SpaceAfterConditional);
         if (d.BreakAfter && pageOpen_ && !area_.NoBreak)
             EmitPage();
+        else if (d.BreakAfterColumn)
+            ColumnBreak();
     }
 
     // ==================== The flow ====================
@@ -345,7 +487,11 @@ internal sealed class PdfLayout
                 break;
             case PdfDisplayGroup group:
                 BlockStart(group.Display);
-                FlowChildren(group.Children, null, group.Display.KeepWithNext);
+                // a column set in a column set, a cell, a header or a footer is an ordinary group
+                if (group.ColumnX != null && columns_ == null && !area_.NoBreak)
+                    FlowColumnSet(group);
+                else
+                    FlowChildren(group.Children, null, group.Display.KeepWithNext);
                 BlockEnd(group.Display);
                 break;
             case PdfScroll scroll:
@@ -598,12 +744,16 @@ internal sealed class PdfLayout
         var p = pc;
         bool wraps = p.Wraps;
         int from = b;
+        bool wrapped = false;
         while (from < end)
         {
             var indent = Pt(p.StartIndent) + (paraFirst_ ? Pt(p.FirstLineStartIndent) : 0);
             var available = area_.Width - indent - Pt(p.EndIndent);
-            // a line does not begin with a space, outside verbatim text
-            while (from < end && atoms_[from].Kind == AtomKind.Space && !atoms_[from].Chars.Verbatim && !atoms_[from].Holds)
+            // a line does not begin with a space, outside verbatim text; after a line the text was broken at for its width, the
+            // spaces at the break stay at the end of that line also in verbatim text (as Word has them, and as XSL's
+            // suppress-at-line-break)
+            while (from < end && atoms_[from].Kind == AtomKind.Space && !atoms_[from].Holds
+                   && (!atoms_[from].Chars.Verbatim || wrapped && atoms_[from].Breakable))
                 from++;
             if (from >= end) break;
             int to = from, next = -1;
@@ -649,6 +799,7 @@ internal sealed class PdfLayout
             }
             if (next < 0) next = to;
             bool last = to >= end || ended;
+            wrapped = !ended && to < end;
             SetLine(p, from, to, indent, available, last);
             paraFirst_ = false;
             from = next;
@@ -695,7 +846,8 @@ internal sealed class PdfLayout
             height = Math.Max(height, image + descent);
         MakeRoom(height, paraKeep_);
         var top = area_.Y;
-        var baseline = top + height - descent;
+        var below = p.MinPostLineSpacing.HasValue ? Math.Max(descent, Pt(p.MinPostLineSpacing.Value)) : descent;
+        var baseline = top + height - below;
         var width = LineWidth(from, to, indent);
         double x = area_.X + indent, extra = 0, fill = 0;
         var quadding = p.Quadding;
@@ -934,7 +1086,8 @@ internal sealed class PdfLayout
         for (int k = 0; k < columns; k++)
             widths[k] = fixedW[k] + (totalUnits > 0 ? left * units[k] / totalUnits : 0);
         var total = widths.Sum();
-        var x = area_.X + Pt(c.StartIndent) + (total < available ? Offset(c.DisplayAlignment, available - total) : 0);
+        // from the start of the area: a row that goes on in the next column of a column set moves with it
+        var x = Pt(c.StartIndent) + (total < available ? Offset(c.DisplayAlignment, available - total) : 0);
         var starts = new double[columns + 1];
         for (int k = 0; k < columns; k++) starts[k + 1] = starts[k] + widths[k];
 
@@ -948,7 +1101,7 @@ internal sealed class PdfLayout
             first = false;
         }
         if (!first && table.AfterRowBorder != null)
-            area_.Ops.Add(BorderLine(x, area_.Y, x + total, area_.Y, table.AfterRowBorder));
+            area_.Ops.Add(BorderLine(area_.X + x, area_.Y, area_.X + x + total, area_.Y, table.AfterRowBorder));
     }
 
     // Rows held together by cells that span them
@@ -994,7 +1147,7 @@ internal sealed class PdfLayout
         }
         foreach (var op in ops)
         {
-            op.Shift(x, top);
+            op.Shift(a.X + x, top);
             if (op.Background)
                 a.Ops.Insert(a.BackgroundAt++, op);
             else

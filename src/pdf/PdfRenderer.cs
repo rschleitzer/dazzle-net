@@ -38,10 +38,56 @@ public class PdfRenderer
 
         var first = new PdfLayout(new Dictionary<string, int>(), fonts, ImageSize);
         first.Run(pageSequences);
-        var layout = new PdfLayout(first.ElementPages, fonts, ImageSize);
+        var balance = Balance(pageSequences, first, fonts, ImageSize);
+        var layout = new PdfLayout(first.ElementPages, fonts, ImageSize, balance);
         layout.Run(pageSequences);
         Locations = layout.ElementLocations;
         Write(layout.Pages, stream);
+    }
+
+    // Balanced columns: on the last page of a column set with balance-columns?, the columns but the
+    // last end at a height, the smallest at which the last column is not longer, so that the columns
+    // are about equally long, the first ones rather the longer. That height is found by setting the
+    // document again, one set after the other in the order they begin: from the content divided by
+    // the number of columns upwards, by half of what the last column is too long, at least 0.5 pt.
+    // A set with a column break on its last page is not balanced, and neither is one the height
+    // would move to another page.
+    private static Dictionary<int, (int Page, double Height)> Balance(List<PdfPageSequence> pageSequences,
+        PdfLayout first, PdfFontCache fonts, Func<string, (double, double)?> imageSize)
+    {
+        var balance = new Dictionary<int, (int Page, double Height)>();
+        var known = first.ElementPages;
+        var ends = first.ColumnSetEnds;
+        for (int set = 0; set < ends.Count; set++)
+        {
+            var end = ends[set];
+            int n = end.Ends.Length;
+            if (!end.Balance || end.HardBreak || end.Page < 0 || n < 2) continue;
+            var content = end.Ends.Sum(e => e - end.Top);
+            if (content <= 0) continue;
+            var height = content / n;
+            for (int round = 0; ; round++)
+            {
+                balance[set] = (end.Page, height);
+                var trial = new PdfLayout(known, fonts, imageSize, balance);
+                trial.Run(pageSequences);
+                var result = trial.ColumnSetEnds.Count > set ? trial.ColumnSetEnds[set] : null;
+                if (result == null || result.Page != end.Page || result.HardBreak || round == 40)
+                {
+                    // the sets after this one stay where the layout without this height has them
+                    balance.Remove(set);
+                    break;
+                }
+                var last = result.Ends[n - 1] - result.Top;
+                if (last <= height + 0.001)
+                {
+                    ends = trial.ColumnSetEnds;
+                    break;
+                }
+                height += Math.Max(0.5, (last - height) / 2);
+            }
+        }
+        return balance;
     }
 
     private static void Write(List<PdfLayout.Page> pages, Stream stream)

@@ -74,7 +74,9 @@ them:
 
 - `line-spacing` is the distance of the lines: exactly that with `min-leading: #f`
   (the initial value), at least that and the height of the line's text plus
-  `min-leading` otherwise;
+  `min-leading` otherwise; below the placement path of a line is the descent of
+  its text, or `min-post-line-spacing` where that is more, and the rest of the
+  line spacing is above;
 - display space collapses to the larger of the space after one block and the
   space before the next, and `conditional?` space is dropped at the start of an
   area — the top of a page, a table cell;
@@ -82,7 +84,9 @@ them:
 - `score` draws its line after (`'after`), through or before the text, or at a
   length below it, over the spaces only with `score-spaces?: #t`;
 - `input-whitespace-treatment: 'preserve` keeps every space, and where `lines:`
-  wraps a line still breaks at them; a tab goes to the next multiple of 36pt;
+  wraps a line still breaks at them; the spaces where a line is broken for its
+  width stay at the end of that line, as XSL's `suppress-at-line-break` has it,
+  and do not indent the next; a tab goes to the next multiple of 36pt;
 - a line breaks at a space, after a soft hyphen (which then shows) and after a
   hyphen between letters;
 - a cell is placed in the column after the previous cell of its row unless its
@@ -95,7 +99,9 @@ them:
   table on the page;
 - a line breaks only once it holds something: a first word wider than the line
   overflows it, and a hyphen between letters is a break also where the letters
-  are in different runs.
+  are in different runs;
+- `break-before: 'column` and `break-after: 'column` go on in the next column of
+  a column set (below), and outside one on a new page.
 
 One deviation: the initial `input-whitespace-treatment` is `'collapse`, not
 `'preserve`.
@@ -157,6 +163,33 @@ characteristic, which a stylesheet declares and then specifies on a
 |---|---|---|
 | `min-row-height` | length | a `table-row` is at least this high |
 | `row-height` | length | a `table-row` is exactly this high |
+| `column-set` | string | the columns a `display-group` sets its content in |
+| `balance-columns?` | boolean | the columns of the group's last page are made equally long |
+
+DSSSL sets columns in the column-set page model, which the backend does not
+have. A `display-group` that specifies `column-set` sets its content in columns
+instead: the string gives, in points, the start of the first column from the
+start of the area and its width, then for every further column the gap before
+it and its width (`"0 240 14 241"`; one column with an offset narrows the area).
+The set begins where the group begins and the space before it, content flows down
+a column into the next, from the last into the first column of the next page,
+and the set ends below its longest column. A paragraph's indents are measured
+from its column. At the top of a column `conditional?` space is dropped as at the
+top of a page. With `balance-columns?: #t` the columns of the set's last page end
+at the smallest height at which the last column is not longer than the others
+(the first ones are rather the longer); the document is set again for that, once
+per set and height tried. A set with a column break on its last page is not
+balanced. A column set in a column set, a table cell, a header or a footer is an
+ordinary group.
+
+```scheme
+(declare-characteristic column-set
+  "UNREGISTERED::Dazzle//Characteristic::column-set" "")
+(declare-characteristic balance-columns?
+  "UNREGISTERED::Dazzle//Characteristic::balance-columns?" #f)
+
+(make display-group column-set: "0 240 14 241" balance-columns?: #t ...)
+```
 
 ## License
 
