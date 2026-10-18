@@ -460,7 +460,8 @@ public class PdfFOTBuilder : FOTBuilder
             nic.entitySystemId.ToString(),
             nic.isDisplay,
             nic.hasMaxWidth, nic.hasMaxWidth ? nic.maxWidth.length : 0,
-            nic.hasMaxHeight, nic.hasMaxHeight ? nic.maxHeight.length : 0) { Display = Display(nic) });
+            nic.hasMaxHeight, nic.hasMaxHeight ? nic.maxHeight.length : 0)
+        { Display = Display(nic), ScaleType = nic.scaleType, ScaleX = nic.scale[0], ScaleY = nic.scale[1] });
         end();
     }
 

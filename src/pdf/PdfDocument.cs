@@ -169,6 +169,10 @@ public class PdfExternalGraphic : PdfNode
     public long MaxWidth { get; }
     public bool HasMaxHeight { get; }
     public long MaxHeight { get; }
+    /// <summary>scale: 'max-uniform (the initial value), 'max, or the factors in Scale (OpenJade's symbolFalse).</summary>
+    public OpenJade.Style.FOTBuilder.Symbol ScaleType { get; init; } = OpenJade.Style.FOTBuilder.Symbol.symbolMaxUniform;
+    public double ScaleX { get; init; } = 1;
+    public double ScaleY { get; init; } = 1;
     public PdfDisplay Display { get; set; } = new();
 
     public PdfExternalGraphic(PdfCharacteristics characteristics, string systemId,

@@ -41,6 +41,7 @@ internal sealed class PdfLayout
         public string? Text;
         public XFont? Font;
         public string? Path;
+        public bool Background;             // the background of a table cell
 
         public void Shift(double dx, double dy)
         {
@@ -74,6 +75,10 @@ internal sealed class PdfLayout
         public double KeepY;
         public Symbol? Align;                 // the alignment of a header or footer part
         public List<string> Marks = new();    // elements waiting for the next line
+        // where the cell backgrounds of tables go on this page: under the contents and borders of every table on it, so
+        // that the background of a row does not cover the border of the row or the table before
+        public List<Op>? BackgroundOps;
+        public int BackgroundAt;
     }
 
     private Area area_ = new();
@@ -404,12 +409,24 @@ internal sealed class PdfLayout
         var own = imageSize_(ResolveImagePath(n.SystemId));
         if (own == null || own.Value.Width <= 0 || own.Value.Height <= 0) return null;
         var (w, h) = own.Value;
+        // scale: factors (OpenJade's symbolFalse) scale the graphic as they are; 'max scales each direction on its own to
+        // max-width and max-height
+        if (n.ScaleType == Symbol.symbolFalse)
+            return (w * n.ScaleX, h * n.ScaleY);
+        if (n.ScaleType == Symbol.symbolMax && (n.HasMaxWidth || n.HasMaxHeight))
+        {
+            var sw = n.HasMaxWidth ? Pt(n.MaxWidth) / w : n.HasMaxHeight ? Pt(n.MaxHeight) / h : 1;
+            var sh = n.HasMaxHeight ? Pt(n.MaxHeight) / h : sw;
+            return (w * sw, h * sh);
+        }
         if (!n.HasMaxWidth && !n.HasMaxHeight)
         {
             if (w > available && available > 0) { h = h * available / w; w = available; }
             return (w, h);
         }
-        var maxW = n.HasMaxWidth ? Math.Min(Pt(n.MaxWidth), available > 0 ? available : double.MaxValue) : double.MaxValue;
+        // scale 'max-uniform (the initial value): the largest uniform scale within max-width and max-height; a max-width the
+        // stylesheet gives is the limit, even where the graphic then overflows its line
+        var maxW = n.HasMaxWidth ? Pt(n.MaxWidth) : double.MaxValue;
         var maxH = n.HasMaxHeight ? Pt(n.MaxHeight) : double.MaxValue;
         var scale = Math.Min(maxW / w, maxH / h);
         return (w * scale, h * scale);
@@ -434,7 +451,14 @@ internal sealed class PdfLayout
         var font = fonts_.Font(c);
         bool verbatim = c.Verbatim;
         var word = new System.Text.StringBuilder();
-        bool hyphen = false;
+        // the text before this run in the paragraph, past location marks: a word may continue across runs
+        Atom? before = null;
+        for (int k = atoms_.Count - 1; k >= paraBase_; k--)
+            if (atoms_[k].Kind != AtomKind.Mark) { before = atoms_[k]; break; }
+        bool LetterBefore() => word.Length > 0 ? char.IsLetter(word[^1])
+            : before is { Kind: AtomKind.Text, Text: { Length: > 0 } b } && char.IsLetter(b[^1]);
+        // a hyphen between letters at the end of the previous run lets the line break before this one
+        bool hyphen = before is { Kind: AtomKind.Text, Text: { Length: > 1 } p } && p[^1] == '-' && char.IsLetter(p[^2]);
         void Word()
         {
             if (word.Length == 0) return;
@@ -475,7 +499,7 @@ internal sealed class PdfLayout
                 case '\u200D':
                 case '\uFEFF':
                     break;
-                case '-' when word.Length > 0 && char.IsLetter(word[^1]):
+                case '-' when LetterBefore():
                     // after a hyphen between letters the line may break, as in a compound word
                     word.Append(ch);
                     hyphen = true;
@@ -585,6 +609,9 @@ internal sealed class PdfLayout
             int to = from, next = -1;
             int breakAt = -1, breakNext = -1;
             bool ended = false;
+            // a line breaks only after it holds something: a location mark at its start does not count, so a first word
+            // wider than the line overflows it instead of leaving a line with only the mark
+            bool held = false;
             while (to < end)
             {
                 var a = atoms_[to];
@@ -594,7 +621,7 @@ internal sealed class PdfLayout
                     next = to + 1;
                     break;
                 }
-                if (wraps && to > from && a.Kind != AtomKind.Mark && LineWidth(from, to + 1, indent) > available + 0.001)
+                if (wraps && held && a.Kind != AtomKind.Mark && LineWidth(from, to + 1, indent) > available + 0.001)
                 {
                     if (breakAt > from)
                     {
@@ -617,6 +644,7 @@ internal sealed class PdfLayout
                     breakAt = to + 1;     // the hyphen stays on the line
                     breakNext = to + 1;
                 }
+                if (a.Kind != AtomKind.Mark) held = true;
                 to++;
             }
             if (next < 0) next = to;
@@ -766,6 +794,13 @@ internal sealed class PdfLayout
                 {
                     fieldX = x;
                     fieldWidth = a.Width;
+                    // a line field in a score is an area of the score's content: it is scored over its whole width
+                    if (a.Chars.Scored)
+                    {
+                        if (score != null && !SameScore(score, a.Chars)) EndScore();
+                        if (score == null) { score = a.Chars; scoreFont = fonts_.Font(a.Chars); scoreFrom = x; scoreTo = x; }
+                        scoreTo = Math.Max(scoreTo, x + fieldWidth);
+                    }
                     // the content of the field: at its start, end or middle
                     int depth = 0, j = i + 1;
                     for (; j < to; j++)
@@ -952,10 +987,18 @@ internal sealed class PdfLayout
             ops.Add(BorderLine(0, 0, 0, height, table.BeforeColumnBorder));
         if (table.AfterColumnBorder != null)
             ops.Add(BorderLine(total, 0, total, height, table.AfterColumnBorder));
+        if (a.BackgroundOps != a.Ops)
+        {
+            a.BackgroundOps = a.Ops;
+            a.BackgroundAt = a.Ops.Count;
+        }
         foreach (var op in ops)
         {
             op.Shift(x, top);
-            a.Ops.Add(op);
+            if (op.Background)
+                a.Ops.Insert(a.BackgroundAt++, op);
+            else
+                a.Ops.Add(op);
         }
         a.Y = top + height;
     }
@@ -1019,7 +1062,7 @@ internal sealed class PdfLayout
         {
             var cc = b.Cell.Characteristics;
             if (cc.CellBackground && cc.HasBackgroundColor)
-                result.Add(new Op { Kind = OpKind.Rect, X = b.X, Y = tops[b.Row], W = b.Width, H = tops[b.Row + b.RowSpan] - tops[b.Row],
+                result.Add(new Op { Kind = OpKind.Rect, Background = true, X = b.X, Y = tops[b.Row], W = b.Width, H = tops[b.Row + b.RowSpan] - tops[b.Row],
                     Color = XColor.FromArgb(cc.BackgroundR, cc.BackgroundG, cc.BackgroundB) });
         }
         foreach (var b in boxes)
@@ -1030,6 +1073,8 @@ internal sealed class PdfLayout
             foreach (var op in b.Ops)
             {
                 op.Shift(b.X + Pt(cc.CellBeforeColumnMargin), tops[b.Row] + Pt(cc.CellBeforeRowMargin) + down);
+                // the backgrounds of a table in the cell stay over the background of the cell
+                op.Background = false;
                 result.Add(op);
             }
         }

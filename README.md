@@ -86,7 +86,16 @@ them:
 - a line breaks at a space, after a soft hyphen (which then shows) and after a
   hyphen between letters;
 - a cell is placed in the column after the previous cell of its row unless its
-  `column-number` says otherwise, also under a cell spanning rows.
+  `column-number` says otherwise, also under a cell spanning rows;
+- an external graphic takes its `scale`: `'max-uniform` (the initial value) the
+  largest uniform scale within `max-width` and `max-height`, `'max` each direction
+  on its own, numbers as they are; a graphic may overflow its line;
+- a line field in a `score` is scored over its whole width;
+- the backgrounds of table cells lie under the contents and borders of every
+  table on the page;
+- a line breaks only once it holds something: a first word wider than the line
+  overflows it, and a hyphen between letters is a break also where the letters
+  are in different runs.
 
 One deviation: the initial `input-whitespace-treatment` is `'collapse`, not
 `'preserve`.
