@@ -22,6 +22,24 @@ public static class DssslProcessor
     public static void GeneratePdf(string xmlPath, string dssslPath, Stream output,
         string? catalogPath = null)
     {
+        Generate(xmlPath, dssslPath, output, catalogPath);
+    }
+
+    /// <summary>
+    /// Process an XML document with a DSSSL stylesheet and return the PDF together with where the
+    /// elements that have an ID (an attribute declared <c>ID</c> in the document's DTD) begin.
+    /// </summary>
+    public static PdfResult GeneratePdfWithLocations(string xmlPath, string dssslPath,
+        string? catalogPath = null)
+    {
+        using var ms = new MemoryStream();
+        var locations = Generate(xmlPath, dssslPath, ms, catalogPath);
+        return new PdfResult(ms.ToArray(), locations);
+    }
+
+    private static IReadOnlyDictionary<string, PdfElementLocation> Generate(string xmlPath, string dssslPath,
+        Stream output, string? catalogPath)
+    {
         catalogPath ??= BundledCatalogPath();
 
         // Coding system: XMLCodingSystem auto-detects UTF-8/UTF-16 from XML declaration.
@@ -99,6 +117,7 @@ public static class DssslProcessor
         styleEngine.process(rootNode, fotBuilder);
         ThrowOnErrors(messageStream, "DSSSL processing failed");
         fotBuilder.Finish(output);
+        return fotBuilder.ElementLocations;
     }
 
     /// <summary>
@@ -198,6 +217,9 @@ public static class DssslProcessor
 /// <summary>
 /// Exception thrown when DSSSL processing encounters errors (with file:line:column details).
 /// </summary>
+/// <summary>A PDF and where the elements with an ID begin in it, by their ID.</summary>
+public sealed record PdfResult(byte[] Pdf, IReadOnlyDictionary<string, PdfElementLocation> Locations);
+
 public class DssslProcessingException : Exception
 {
     public DssslProcessingException(string message) : base(message) { }

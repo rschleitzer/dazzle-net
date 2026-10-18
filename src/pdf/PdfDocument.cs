@@ -5,6 +5,12 @@ using Symbol = OpenJade.Style.FOTBuilder.Symbol;
 
 // The flow object tree the FOT builder collects and PdfLayout sets. Every node keeps a snapshot
 // of the inherited characteristics it was made under.
+/// <summary>
+/// Where an element begins in the PDF: the page (from 1) and the top left of its first line, or of
+/// the content of its cell, in points from the top left of the page.
+/// </summary>
+public sealed record PdfElementLocation(int Page, double X, double Y);
+
 public abstract class PdfNode
 {
     public PdfCharacteristics Characteristics { get; set; }

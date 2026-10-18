@@ -112,6 +112,23 @@ byte[] pdf = DssslProcessor.GeneratePdfBytes("document.xml", "stylesheet.dsl");
 A third overload writes to a `Stream`. All take an optional path to an SGML
 catalog; without one the bundled catalog is used.
 
+`GeneratePdfWithLocations` also says where the elements that have an ID (an
+attribute declared `ID` in the document's DTD) begin: the page, counted from 1,
+and the top left of the element's first line, or of the content of its table
+cell, in points from the top left of the page. A program that draws on the PDF
+afterwards can place things relative to an element, the way word processors
+anchor a frame to a paragraph:
+
+```csharp
+PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "stylesheet.dsl");
+PdfElementLocation where = result.Locations["intro"];   // where.Page, where.X, where.Y
+```
+
+The locations come from the marks the backend sets for every element processed
+in the initial processing mode, the same marks `current-node-page-number-sosofo`
+reads; an element processed only in a named mode has none. The top of a first
+line is below the element's `space-before`.
+
 ### Extension characteristics
 
 DSSSL has no height for a table row. The backend takes it as an extension

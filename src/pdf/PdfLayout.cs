@@ -51,6 +51,9 @@ internal sealed class PdfLayout
 
     public List<Page> Pages { get; } = new();
     public Dictionary<string, int> ElementPages { get; } = new();
+    // Where every element begins: the page in the document (from 1) and the top left of its first
+    // line or cell in points from the top left of the page
+    public Dictionary<string, PdfElementLocation> ElementLocations { get; } = new();
 
     // ==================== State ====================
 
@@ -146,7 +149,10 @@ internal sealed class PdfLayout
         page.Ops.AddRange(HeadersAndFooters(page));
         foreach (var op in page.Ops)
             if (op.Kind == OpKind.Mark && op.Text != null && !ElementPages.ContainsKey(op.Text))
+            {
                 ElementPages[op.Text] = pageNo_;
+                ElementLocations[op.Text] = new PdfElementLocation(Pages.Count + 1, op.X, op.Y);
+            }
         Pages.Add(page);
         seqFirst_ = false;
         pageOpen_ = false;

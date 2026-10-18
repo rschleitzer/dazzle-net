@@ -125,14 +125,25 @@ public class PdfFOTBuilder : FOTBuilder
         if (pageSequences_.Count == 0)
             return;
         using var stream = File.Create(outputFilename_);
-        new PdfRenderer().Render(pageSequences_, stream);
+        Render(stream);
     }
 
     public void Finish(Stream stream)
     {
         if (pageSequences_.Count == 0)
             return;
-        new PdfRenderer().Render(pageSequences_, stream);
+        Render(stream);
+    }
+
+    private void Render(Stream stream)
+    {
+        var renderer = new PdfRenderer();
+        renderer.Render(pageSequences_, stream);
+        var locations = new System.Collections.Generic.Dictionary<string, PdfElementLocation>();
+        foreach (var (name, id) in idNames_)
+            if (renderer.Locations.TryGetValue(name, out var location))
+                locations[id] = location;
+        ElementLocations = locations;
     }
 
     // ==================== Block-level flow objects ====================
@@ -334,6 +345,8 @@ public class PdfFOTBuilder : FOTBuilder
             var name = GetLocationName(node);
             if (name == null)
                 return;
+            if (TryGetId(node, out var id))
+                idNames_[name] = id;
             // Between the cells of a table (a row element, say) the mark waits for the next cell,
             // so that it lands on the page of its row and not after the whole table.
             if (currentTable_ != null && FindEnclosingCell() == null)
@@ -344,6 +357,28 @@ public class PdfFOTBuilder : FOTBuilder
     }
 
     private readonly System.Collections.Generic.List<string> pendingTableMarks_ = new();
+    private readonly System.Collections.Generic.Dictionary<string, string> idNames_ = new();
+
+    /// <summary>
+    /// Where the elements with an ID begin, by their ID, after <see cref="Finish(Stream)"/>.
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyDictionary<string, PdfElementLocation> ElementLocations { get; private set; }
+        = new System.Collections.Generic.Dictionary<string, PdfElementLocation>();
+
+    private static bool TryGetId(NodePtr node, out string id)
+    {
+        GroveString value = new GroveString();
+        if (node.getId(ref value) == OpenJade.Grove.AccessResult.accessOK && value.size() > 0)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (nuint i = 0; i < value.size(); i++)
+                sb.Append((char)value[i]);
+            id = sb.ToString();
+            return true;
+        }
+        id = "";
+        return false;
+    }
 
     public override void currentNodePageNumber(NodePtr node)
     {

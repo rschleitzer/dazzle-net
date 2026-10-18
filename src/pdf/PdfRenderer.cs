@@ -8,6 +8,9 @@ using PdfSharp.Pdf;
 // current-node-page-number filled in, and those are written.
 public class PdfRenderer
 {
+    /// <summary>Where every element begins, by the name of its location mark, after <see cref="Render"/>.</summary>
+    public IReadOnlyDictionary<string, PdfElementLocation> Locations { get; private set; } = new Dictionary<string, PdfElementLocation>();
+
     public void Render(List<PdfPageSequence> pageSequences, Stream stream)
     {
         PdfFontCache.EnsureFontResolver();
@@ -37,6 +40,7 @@ public class PdfRenderer
         first.Run(pageSequences);
         var layout = new PdfLayout(first.ElementPages, fonts, ImageSize);
         layout.Run(pageSequences);
+        Locations = layout.ElementLocations;
         Write(layout.Pages, stream);
     }
 
