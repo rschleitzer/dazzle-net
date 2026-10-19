@@ -3,6 +3,7 @@ namespace Dazzle.Pdf;
 using PdfSharp.Drawing;
 using Symbol = OpenJade.Style.FOTBuilder.Symbol;
 using HF = OpenJade.Style.FOTBuilder.HF;
+using PageModel = OpenJade.Style.PageModel;
 
 // The layout: sets the flow object tree into pages. It follows the PDF backend of the Scaly
 // port of OpenJade (packages/dazzle/…/PdfFOTBuilder.scaly): blocks flow down the page, a
@@ -114,9 +115,10 @@ internal sealed class PdfLayout
     // index of the set: found by the renderer over several layouts
     private readonly IReadOnlyDictionary<int, (int Page, double Height)> balance_;
 
-    // The page sequence being set
+    // The page sequence being set, and how many of its pages are written
     private PdfPageSequence? seq_;
     private bool seqFirst_;
+    private int seqPage_;
 
     // The page number a page-number flow object shows (headers and footers ask for their page)
     private int? hfPage_;
@@ -139,14 +141,14 @@ internal sealed class PdfLayout
             if (pageOpen_) EmitPage();
             seq_ = seq;
             seqFirst_ = true;
+            seqPage_ = 0;
             columns_ = null;
-            var c = seq.Characteristics;
             area_ = new Area
             {
-                X = Pt(c.LeftMargin),
-                Width = Pt(c.PageWidth - c.LeftMargin - c.RightMargin),
-                Top = Pt(c.TopMargin),
-                Bottom = Pt(c.PageHeight - c.BottomMargin)
+                X = PageX,
+                Width = PageWidthOfBody,
+                Top = PageTop,
+                Bottom = PageBottom
             };
             area_.Y = area_.Top;
             FlowChildren(seq.Children, null, false);
@@ -170,6 +172,17 @@ internal sealed class PdfLayout
         area_.Y = area_.Top;
         area_.KeepAt = -1;
         fixedOps_ = 0;
+        // a column set stands in the body of the page it is on
+        if (columns_ is { } open)
+        {
+            open.OuterX = PageX;
+            open.OuterWidth = PageWidthOfBody;
+        }
+        else
+        {
+            area_.X = PageX;
+            area_.Width = PageWidthOfBody;
+        }
         if (columns_ is { } set)
         {
             set.Top = area_.Top;
@@ -179,12 +192,32 @@ internal sealed class PdfLayout
         }
     }
 
-    // The body of the page: on the first page of a sequence first-page-top-margin and
+    // The model of the page being set in a page-sequence: the k-th page takes the k-th of
+    // initial-page-models, the pages after them go round repeat-page-models; null in a simple-page-sequence
+    private PageModel? Model
+    {
+        get
+        {
+            var seq = seq_!;
+            if (seq.InitialPageModels == null) return null;
+            if (seqPage_ < seq.InitialPageModels.Length) return seq.InitialPageModels[seqPage_];
+            var repeat = seq.RepeatPageModels!;
+            if (repeat.Length == 0)
+                throw new DssslProcessingException(
+                    $"page {seqPage_ + 1} of a page-sequence has no page model: initial-page-models has "
+                    + $"{seq.InitialPageModels.Length} and repeat-page-models none");
+            return repeat[(seqPage_ - seq.InitialPageModels.Length) % repeat.Length];
+        }
+    }
+
+    // The body of the page: the region of its page model (whose origin is at the lower left, y going up),
+    // or the margins of the simple-page-sequence, on its first page first-page-top-margin and
     // first-page-bottom-margin where they are given
     private double PageTop
     {
         get
         {
+            if (Model is { } m) return Pt(m.height - m.regionYOrigin - m.regionHeight);
             var c = seq_!.Characteristics;
             return Pt(seqFirst_ && c.FirstPageTopMargin > 0 ? c.FirstPageTopMargin : c.TopMargin);
         }
@@ -194,8 +227,28 @@ internal sealed class PdfLayout
     {
         get
         {
+            if (Model is { } m) return Pt(m.height - m.regionYOrigin);
             var c = seq_!.Characteristics;
             return Pt(c.PageHeight - (seqFirst_ && c.FirstPageBottomMargin > 0 ? c.FirstPageBottomMargin : c.BottomMargin));
+        }
+    }
+
+    private double PageX
+    {
+        get
+        {
+            if (Model is { } m) return Pt(m.regionXOrigin);
+            return Pt(seq_!.Characteristics.LeftMargin);
+        }
+    }
+
+    private double PageWidthOfBody
+    {
+        get
+        {
+            if (Model is { } m) return Pt(m.regionWidth);
+            var c = seq_!.Characteristics;
+            return Pt(c.PageWidth - c.LeftMargin - c.RightMargin);
         }
     }
 
@@ -288,10 +341,11 @@ internal sealed class PdfLayout
     private void EmitPage()
     {
         var c = seq_!.Characteristics;
+        var model = Model;
         var page = new Page
         {
-            Width = Pt(c.PageWidth),
-            Height = Pt(c.PageHeight),
+            Width = Pt(model?.width ?? c.PageWidth),
+            Height = Pt(model?.height ?? c.PageHeight),
             Number = pageNo_,
             NumberFormat = c.PageNumberFormat,
             FirstOfSequence = seqFirst_,
@@ -306,6 +360,7 @@ internal sealed class PdfLayout
             }
         Pages.Add(page);
         seqFirst_ = false;
+        seqPage_++;
         pageOpen_ = false;
         area_.Ops = new List<Op>();
         area_.KeepAt = -1;
@@ -500,7 +555,11 @@ internal sealed class PdfLayout
                 break;
             case PdfDisplayGroup group:
                 BlockStart(group.Display);
-                // a column set in a column set, a cell, a header or a footer is an ordinary group
+                // a column set in a column set, a cell, a header or a footer is an ordinary group; for a
+                // column-set-sequence that would set otherwise than it asks
+                if (group.ColumnSetSequence && (columns_ != null || area_.NoBreak))
+                    throw new DssslProcessingException(
+                        "a column-set-sequence in a column set, a table cell, a header or a footer is not supported");
                 if (group.ColumnX != null && columns_ == null && !area_.NoBreak)
                     FlowColumnSet(group);
                 else

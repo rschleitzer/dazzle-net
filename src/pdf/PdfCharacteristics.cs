@@ -82,6 +82,12 @@ public class PdfCharacteristics
     public long? ScoreLength { get; set; } = null;
     public bool ScoreSpaces { get; set; } = true;
 
+    // The page model (12.6.4, 12.6.5): the models of a page-sequence and of a column-set-sequence
+    public PageModel[] InitialPageModels { get; set; } = System.Array.Empty<PageModel>();
+    public PageModel[] RepeatPageModels { get; set; } = System.Array.Empty<PageModel>();
+    public ColumnSetModel? ColumnSetModel { get; set; } = null;
+    public long Span { get; set; } = 1;
+
     // Dazzle extension characteristics (see PdfFOTBuilder.GetExtensions)
     public long MinRowHeight { get; set; } = 0;
     public long RowHeight { get; set; } = 0;

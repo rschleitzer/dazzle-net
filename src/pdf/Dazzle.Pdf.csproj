@@ -10,7 +10,7 @@
 
     <!-- NuGet Package -->
     <PackageId>Dazzle.Pdf</PackageId>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Authors>Ralf Schleitzer</Authors>
     <Description>DSSSL-to-PDF processor using OpenJade: sets the pages itself and writes them with PDFsharp. Includes table support and a clean DssslProcessor API.</Description>
     <PackageTags>dsssl;openjade;pdf;pdfsharp</PackageTags>
@@ -20,9 +20,18 @@
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
-  <ItemGroup>
+  <!-- OpenJadeSource names a checkout of openjade-net to build against instead of the packages
+       (dotnet build -p:OpenJadeSource=../openjade-net), for changes to both before a release -->
+  <ItemGroup Condition="'$(OpenJadeSource)' == ''">
     <PackageReference Include="OpenSP" Version="1.5.4" />
-    <PackageReference Include="OpenJade" Version="1.3.6" />
+    <PackageReference Include="OpenJade" Version="1.4.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(OpenJadeSource)' != ''">
+    <ProjectReference Include="$(OpenJadeSource)\src\OpenSP\OpenSP.csproj" />
+    <ProjectReference Include="$(OpenJadeSource)\src\OpenJade\OpenJade.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="PDFsharp" Version="6.2.4" />
   </ItemGroup>
 

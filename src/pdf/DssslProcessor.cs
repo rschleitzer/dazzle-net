@@ -116,6 +116,8 @@ public static class DssslProcessor
         var fotBuilder = new PdfFOTBuilder(messenger, "");
         styleEngine.process(rootNode, fotBuilder);
         ThrowOnErrors(messageStream, "DSSSL processing failed");
+        if (fotBuilder.Errors.Count > 0)
+            throw new DssslProcessingException("DSSSL processing failed:\n" + string.Join("\n", fotBuilder.Errors.Distinct()));
         fotBuilder.Finish(output);
         return fotBuilder.ElementLocations;
     }

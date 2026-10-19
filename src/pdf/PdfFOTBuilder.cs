@@ -46,6 +46,9 @@ public class PdfFOTBuilder : FOTBuilder
     // Otherwise, add to the page sequence.
     private void AddNode(PdfNode node)
     {
+        // span applies to what is flowed into a column set; there each area is one column wide
+        if (columnSetSequences_ > 0 && current_.Span != 1 && !(node is PdfDisplayGroup g && g.ColumnSetSequence))
+            errors_.Add($"span {current_.Span} in a column-set-sequence: an area spans one column only");
         if (hfSlot_.HasValue && pageSequence_ != null && containerStack_.Count <= hfDepth_)
             pageSequence_.HeaderFooter[hfSlot_.Value].Add(node);
         else if (containerStack_.Count > 0)
@@ -108,6 +111,57 @@ public class PdfFOTBuilder : FOTBuilder
     public override void endAllSimplePageSequenceHeaderFooter()
     {
         // HF data is already stored in pageSequence_.HeaderFooter
+    }
+
+    // A page-sequence: like a simple-page-sequence without headers and footers, its pages from its models
+    public override void startPageSequence()
+    {
+        characteristicsStack_.Push(current_.Clone());
+        pageSequence_ = new PdfPageSequence(current_, nHF)
+        {
+            InitialPageModels = current_.InitialPageModels,
+            RepeatPageModels = current_.RepeatPageModels
+        };
+        if (containerStack_.Count > 0)
+        {
+            var stack = containerStack_.ToArray();
+            pageSequence_.Add(stack[stack.Length - 1]);
+        }
+    }
+
+    public override void endPageSequence() => endSimplePageSequence();
+
+    public override void setInitialPageModels(PageModel[] models) => current_.InitialPageModels = models;
+    public override void setRepeatPageModels(PageModel[] models) => current_.RepeatPageModels = models;
+    public override void setColumnSetModel(ColumnSetModel? model) => current_.ColumnSetModel = model;
+    public override void setSpan(long n) => current_.Span = n;
+
+    // What the backend cannot set although the language allows it; DssslProcessor fails the run with these
+    private readonly System.Collections.Generic.List<string> errors_ = new();
+    public System.Collections.Generic.IReadOnlyList<string> Errors => errors_;
+    private int columnSetSequences_;
+
+    // A column-set-sequence: its content set into the columns of its model
+    public override void startColumnSetSequence(DisplayNIC nic)
+    {
+        var group = new PdfDisplayGroup(current_) { Display = Display(nic), ColumnSetSequence = true };
+        var model = current_.ColumnSetModel;
+        if (model == null)
+            errors_.Add("a column-set-sequence without a column-set-model");
+        else
+        {
+            group.ColumnX = model.columnXOrigin.Select(x => x / 1000.0).ToArray();
+            group.ColumnWidth = model.columnWidth.Select(w => w / 1000.0).ToArray();
+            group.BalanceColumns = model.balance;
+        }
+        Open(group);
+        columnSetSequences_++;
+    }
+
+    public override void endColumnSetSequence()
+    {
+        columnSetSequences_--;
+        Close();
     }
 
     public override void endSimplePageSequence()

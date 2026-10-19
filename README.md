@@ -63,11 +63,16 @@ The PDF backend sets the pages itself and writes them with
 of the Scaly port of OpenJade does: blocks flow down the page, paragraphs are
 broken into lines, tables are set row by row, and the flow object tree is laid
 out twice so that `current-node-page-number-sosofo` knows its page. It sets
-simple page sequences with headers and footers, paragraphs and
+simple page sequences with headers and footers, page sequences and column sets
+of the full page model (below), paragraphs and
 `paragraph-break`, display groups, boxes, line fields, leaders, `score`, rules,
 external graphics and tables (spanned columns and rows, borders of the table
 and its cells, header rows again on every page, tables in cells) — enough to set
 a book with the DocBook print stylesheets.
+
+An error in the stylesheet fails the run (`DssslProcessingException`, with the
+place in the stylesheet), and so does what the backend cannot set although the
+language allows it.
 
 The characteristics mean what ISO/IEC 10179 says, as the RTF backend of Jade has
 them:
@@ -147,6 +152,42 @@ in the initial processing mode, the same marks `current-node-page-number-sosofo`
 reads; an element processed only in a named mode has none. The top of a first
 line is below the element's `space-before`.
 
+### The full page model
+
+Since 0.6.0, on OpenJade 1.4.0, the backend has a part of the full page model of
+ISO/IEC 10179 (12.6.4, 12.6.5): the features `page` and `multi-column`,
+restricted, and not `nested-column-set`. A page model has the size of the page
+and one region filled top to bottom (its origin at the lower left, y going up);
+a column-set model has one column subset with its columns and `balance?`.
+`page-sequence` takes `initial-page-models` and `repeat-page-models`: the k-th
+page takes the k-th initial model, the pages after them go round the repeat
+models. `column-set-sequence` takes `column-set-model` and the display
+characteristics; its content flows down a column into the next, from the last
+into the first column of the next page, and the set ends below its longest
+column. Everything else of the page model is an error where it is written.
+
+```scheme
+(define-page-model first
+  (width 595pt) (height 842pt)
+  (region (x-origin 70pt) (y-origin 56pt) (width 469pt) (height 600pt)))
+(define-page-model other
+  (width 595pt) (height 842pt)
+  (region (x-origin 70pt) (y-origin 56pt) (width 469pt) (height 730pt)))
+(define-column-set-model two
+  (column-subset (column (x-origin 0pt) (width 220pt))
+                 (column (x-origin 249pt) (width 220pt))
+                 (balance? #t)))
+
+(root (make page-sequence initial-page-models: (list first)
+                          repeat-page-models: (list other)
+        (process-children)))
+(element section (make column-set-sequence column-set-model: two
+                   (process-children)))
+```
+
+A column-set-sequence in a table cell, a header or a footer, and `span` other
+than 1 in a column set, are errors.
+
 ### Extension characteristics
 
 DSSSL has no height for a table row. The backend takes it as an extension
@@ -166,14 +207,17 @@ characteristic, which a stylesheet declares and then specifies on a
 |---|---|---|
 | `min-row-height` | length | a `table-row` is at least this high |
 | `row-height` | length | a `table-row` is exactly this high |
-| `column-set` | string | the columns a `display-group` sets its content in |
-| `balance-columns?` | boolean | the columns of the group's last page are made equally long |
-| `first-page-top-margin` | length | the top margin of the first page of a `simple-page-sequence` (0pt: as the others) |
-| `first-page-bottom-margin` | length | its bottom margin (0pt: as the others) |
+| `column-set` | string | the columns a `display-group` sets its content in (deprecated: `column-set-sequence`) |
+| `balance-columns?` | boolean | the columns of the group's last page are made equally long (deprecated: `balance?`) |
+| `first-page-top-margin` | length | the top margin of the first page of a `simple-page-sequence` (0pt: as the others; deprecated: `page-sequence`) |
+| `first-page-bottom-margin` | length | its bottom margin (0pt: as the others; deprecated: `page-sequence`) |
 
-DSSSL sets columns in the column-set page model, which the backend does not
-have. A `display-group` that specifies `column-set` sets its content in columns
-instead: the string gives, in points, the start of the first column from the
+The last four are deprecated since 0.6.0 and stay for one version: the full page
+model above does the same in the terms of the standard.
+
+DSSSL sets columns in the full page model, which the backend did not have
+before 0.6.0. A `display-group` that specifies `column-set` sets its content in
+columns instead: the string gives, in points, the start of the first column from the
 start of the area and its width, then for every further column the gap before
 it and its width (`"0 240 14 241"`; one column with an offset narrows the area).
 The set begins where the group begins and the space before it, content flows down

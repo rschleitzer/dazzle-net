@@ -53,6 +53,11 @@ public class PdfPageSequence : PdfContainerNode
     // 24 header/footer slots (FOTBuilder.HF flags)
     public List<PdfNode>[] HeaderFooter { get; }
 
+    // A page-sequence: the models of its first pages and of the pages after them (null for a
+    // simple-page-sequence, whose pages all have its margins)
+    public PageModel[]? InitialPageModels;
+    public PageModel[]? RepeatPageModels;
+
     public PdfPageSequence(PdfCharacteristics characteristics, int headerFooterSlots)
         : base(characteristics)
     {
@@ -76,6 +81,8 @@ public class PdfDisplayGroup : PdfContainerNode
     public double[]? ColumnX;
     public double[]? ColumnWidth;
     public bool BalanceColumns;
+    // Made by a column-set-sequence, which has to set its columns
+    public bool ColumnSetSequence;
 
     public PdfDisplayGroup(PdfCharacteristics characteristics) : base(characteristics) { }
 }
