@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook V5.0/EN" "docbook.dtd">
+<book xmlns="http://docbook.org/ns/docbook" version="5.0" xml:id="dazzle-net">
+  <info>
+    <title>Dazzle.net</title>
+    <subtitle>DSSSL for .NET: the packages, the extensions, readings of the standard, and the parts of it they have</subtitle>
+  </info>
+
+  <preface xml:id="about">
+    <title>About this document</title>
+    <para>Dazzle.net runs DSSSL stylesheets (ISO/IEC 10179:1996) over SGML and XML documents on .NET
+      (<link xlink:href="https://github.com/rschleitzer/dazzle-net" xmlns:xlink="http://www.w3.org/1999/xlink">github.com/rschleitzer/dazzle-net</link>).
+      It builds on the C# port of James Clark's OpenSP and OpenJade (the packages <literal>OpenSP</literal> and
+      <literal>OpenJade</literal>,
+      <link xlink:href="https://github.com/rschleitzer/openjade-net" xmlns:xlink="http://www.w3.org/1999/xlink">github.com/rschleitzer/openjade-net</link>)
+      and adds a flow object class for writing directory trees and a PDF backend that sets the pages itself.</para>
+    <para>This document says what Dazzle.net adds to the standard, where it reads the standard in a way the standard
+      leaves open, where it deviates, and which of the standard's optional parts it has. What the standard itself says
+      is not repeated here; the clause numbers refer to ISO/IEC 10179:1996.</para>
+    <para>Every addition is made the way the standard provides for it: a flow object class with
+      <literal>declare-flow-object-class</literal>, a characteristic with <literal>declare-characteristic</literal>,
+      each with a public identifier of the form <literal>UNREGISTERED::Dazzle//…</literal>. A stylesheet that uses one
+      declares it; another DSSSL engine reads such a stylesheet and passes the addition over.</para>
+  </preface>
+
+  <chapter xml:id="packages">
+    <title>The packages</title>
+    <informaltable>
+      <tgroup cols="2">
+        <thead>
+          <row><entry>Package</entry><entry>What it is</entry></row>
+        </thead>
+        <tbody>
+          <row><entry><literal>Dazzle.Cli</literal></entry><entry>the command-line tool <command>dazzle</command>
+            (<literal>-t sgml</literal>, <literal>-t xml</literal>, <literal>-t pdf</literal>), with the DTDs of the DSSSL
+            architecture and a catalog for them</entry></row>
+          <row><entry><literal>Dazzle.Pdf</literal></entry><entry>the PDF backend as a library, written with PDFsharp</entry></row>
+          <row><entry><literal>Dazzle</literal></entry><entry>the transformation backend with the <literal>directory</literal>
+            flow object class</entry></row>
+        </tbody>
+      </tgroup>
+    </informaltable>
+    <para>All target .NET 10. From a program, Dazzle.Pdf sets a document with <literal>DssslProcessor</literal>:</para>
+    <programlisting language="csharp">using Dazzle.Pdf;
+
+DssslProcessor.GeneratePdf("document.xml", "stylesheet.dsl", "document.pdf");
+byte[] pdf = DssslProcessor.GeneratePdfBytes("document.xml", "stylesheet.dsl");
+PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "stylesheet.dsl");</programlisting>
+    <para>Every call takes an optional path to an SGML catalog; without one the bundled catalog is used. An error in
+      the document, the stylesheet or the formatting throws <literal>DssslProcessingException</literal> with the
+      messages and their places (<xref linkend="errors"/>).</para>
+  </chapter>
+
+  <chapter xml:id="extensions">
+    <title>Extensions</title>
+
+    <section xml:id="directory">
+      <title>The <literal>directory</literal> flow object class</title>
+      <para>The transformation backend writes text files through the <literal>entity</literal> flow object class.
+        <literal>directory</literal> creates a directory and makes the entities inside it relative to it, so a
+        stylesheet can lay out a whole tree of generated files.</para>
+      <programlisting language="dsssl">(declare-flow-object-class entity
+  "UNREGISTERED::James Clark//Flow Object Class::entity")
+(declare-flow-object-class directory
+  "UNREGISTERED::Dazzle//Flow Object Class::directory")
+
+(make directory path: "generated"
+  (make entity system-id: "Parser.cs"
+    (literal "// ...")))</programlisting>
+      <para>In the package <literal>Dazzle</literal> and the tool. The C++ original modified for it and its port to
+        Scaly (<link xlink:href="https://github.com/rschleitzer/dazzle" xmlns:xlink="http://www.w3.org/1999/xlink">github.com/rschleitzer/dazzle</link>)
+        have it too.</para>
+    </section>
+
+    <section xml:id="row-height">
+      <title>Row heights: <literal>min-row-height</literal> and <literal>row-height</literal></title>
+      <para>DSSSL has no height for a table row. Dazzle.Pdf takes it as two characteristics, specified on a
+        <literal>table-row</literal> or anything around it.</para>
+      <informaltable>
+        <tgroup cols="3">
+          <thead>
+            <row><entry>Characteristic</entry><entry>Value</entry><entry>Meaning</entry></row>
+          </thead>
+          <tbody>
+            <row><entry><literal>min-row-height</literal></entry><entry>length, initial 0pt</entry><entry>the row is at least this high</entry></row>
+            <row><entry><literal>row-height</literal></entry><entry>length, initial 0pt</entry><entry>the row is exactly this high (0pt: as its cells ask)</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+      <programlisting language="dsssl">(declare-characteristic min-row-height
+  "UNREGISTERED::Dazzle//Characteristic::min-row-height" 0pt)
+(declare-characteristic row-height
+  "UNREGISTERED::Dazzle//Characteristic::row-height" 0pt)
+
+(make table-row min-row-height: 20pt ...)</programlisting>
+      <para>The height belongs to the row and not to what is in it: OpenJade passes the style of a
+        <literal>table-row</literal> on with its cells, and a table in a cell does not take on the height of the row
+        around it (since 0.5.0). Since Dazzle.Pdf 0.2.0.</para>
+    </section>
+
+    <section xml:id="column-set-extension">
+      <title>Columns: <literal>column-set</literal> and <literal>balance-columns?</literal></title>
+      <note><para>Deprecated since Dazzle.Pdf 0.6.0: <literal>column-set-sequence</literal> with a column-set model
+        (<xref linkend="page-model"/>) does the same in the terms of the standard. The two characteristics stay for one
+        version.</para></note>
+      <para>DSSSL sets columns in the full page model (<xref linkend="page-model"/>). Before Dazzle.Pdf had it, a
+        <literal>display-group</literal> that specifies <literal>column-set</literal> set its content in columns.</para>
+      <informaltable>
+        <tgroup cols="3">
+          <thead>
+            <row><entry>Characteristic</entry><entry>Value</entry><entry>Meaning</entry></row>
+          </thead>
+          <tbody>
+            <row><entry><literal>column-set</literal></entry><entry>string, initial <literal>""</literal></entry>
+              <entry>in points: the start of the first column from the start of the area and its width, then for every
+                further column the gap before it and its width</entry></row>
+            <row><entry><literal>balance-columns?</literal></entry><entry>boolean, initial <literal>#f</literal></entry>
+              <entry>the columns of the set's last page are made equally long</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+      <programlisting language="dsssl">(declare-characteristic column-set
+  "UNREGISTERED::Dazzle//Characteristic::column-set" "")
+(declare-characteristic balance-columns?
+  "UNREGISTERED::Dazzle//Characteristic::balance-columns?" #f)
+
+(make display-group column-set: "0 240 14 241" balance-columns?: #t ...)</programlisting>
+      <para>The set begins where the group begins, below the space before it. Content flows down a column into the
+        next, from the last into the first column of the next page, and the set ends below its longest column. A
+        paragraph's indents are measured from its column. At the top of a column <literal>conditional?</literal> space
+        is dropped as at the top of a page. One column with an offset narrows the area. A balanced set ends at the
+        smallest height at which the last column is not longer than the others; the first ones are rather the longer.
+        A column set in a column set, a table cell, a header or a footer is an ordinary group.</para>
+      <para>Only the group that specifies <literal>column-set</literal> sets columns, not the flow objects in it,
+        although an extension characteristic is inherited like any other. Since Dazzle.Pdf 0.4.0.</para>
+    </section>
+
+    <section xml:id="first-page-margins">
+      <title>The first page: <literal>first-page-top-margin</literal> and <literal>first-page-bottom-margin</literal></title>
+      <note><para>Deprecated since Dazzle.Pdf 0.6.0: a <literal>page-sequence</literal> with one page model for the
+        first page and one for the others (<xref linkend="page-model"/>) does the same in the terms of the standard.
+        The two characteristics stay for one version.</para></note>
+      <para>A <literal>simple-page-sequence</literal> has one set of margins. These two characteristics give its
+        first page a top and a bottom margin of their own; 0pt means as the other pages.</para>
+      <programlisting language="dsssl">(declare-characteristic first-page-top-margin
+  "UNREGISTERED::Dazzle//Characteristic::first-page-top-margin" 0pt)
+(declare-characteristic first-page-bottom-margin
+  "UNREGISTERED::Dazzle//Characteristic::first-page-bottom-margin" 0pt)
+
+(make simple-page-sequence top-margin: 56pt first-page-top-margin: 120pt ...)</programlisting>
+      <para>Since Dazzle.Pdf 0.5.0.</para>
+    </section>
+
+    <section xml:id="locations">
+      <title>Where elements begin</title>
+      <para>Not a part of the language but of the program interface of Dazzle.Pdf:
+        <literal>DssslProcessor.GeneratePdfWithLocations</literal> also says where each element with an ID (an attribute
+        declared <literal>ID</literal> in the document's DTD) begins: the page, counted from 1, and the top left of the
+        element's first line, or of the content of its table cell, in points from the top left of the page. A program
+        that draws on the PDF afterwards can place things relative to an element.</para>
+      <para>The locations come from the marks the backend sets for every element processed in the initial processing
+        mode, the same marks <literal>current-node-page-number-sosofo</literal> reads; an element processed only in a
+        named mode has none. A mark has no height and holds no line. Since Dazzle.Pdf 0.3.0.</para>
+    </section>
+  </chapter>
+
+  <chapter xml:id="errors">
+    <title>Errors</title>
+    <para>An error in a stylesheet fails the run, with the place in the stylesheet where it is: a characteristic with
+      a value it cannot take, a form the engine does not have, a part of the page model outside the subset
+      (<xref linkend="page-model"/>). The C++ original reports these through its messenger; until OpenJade 1.4.0 the
+      C# port wrote them to the console and went on, and Dazzle.Pdf set the document anyway.</para>
+    <para>Dazzle.Pdf adds the errors of what it cannot set although the language allows it, and fails the run with
+      them as well: a <literal>column-set-sequence</literal> in a table cell, a header or a footer; a flow object
+      in a column set with a <literal>span</literal> other than 1; a page of a <literal>page-sequence</literal>
+      for which there is no page model.</para>
+  </chapter>
+
+  <chapter xml:id="readings">
+    <title>Readings of the standard</title>
+    <para>Where the standard is silent or leaves a choice, Dazzle.Pdf decides as follows. The characteristics otherwise
+      mean what ISO/IEC 10179 says, as the RTF backend of Jade has them.</para>
+
+    <section xml:id="whitespace">
+      <title>White space</title>
+      <itemizedlist>
+        <listitem><para><emphasis>A deviation:</emphasis> the initial value of
+          <literal>input-whitespace-treatment</literal> is <literal>'collapse</literal>, not
+          <literal>'preserve</literal>.</para></listitem>
+        <listitem><para>The spaces where a line is broken for its width stay at the end of that line, also under
+          <literal>'preserve</literal>, and do not indent the next one. The standard does not say where kept spaces
+          go at a break; Dazzle.Pdf does what XSL's <literal>suppress-at-line-break</literal> describes and what word
+          processors do (since 0.4.0).</para></listitem>
+        <listitem><para>A tab goes to the next multiple of 36pt.</para></listitem>
+      </itemizedlist>
+    </section>
+
+    <section xml:id="lines">
+      <title>Lines</title>
+      <itemizedlist>
+        <listitem><para>Below the placement path of a line is the descent of its text, or
+          <literal>min-post-line-spacing</literal> where that is more; the rest of the line spacing is above (since
+          0.4.0; before, the characteristic had no effect). <literal>min-pre-line-spacing</literal> has no effect
+          yet.</para></listitem>
+        <listitem><para>A line breaks at a space, after a soft hyphen (which then shows) and after a hyphen between
+          letters, also where the letters are in different runs. A line breaks only once it holds something: a first
+          word wider than the line overflows it.</para></listitem>
+      </itemizedlist>
+    </section>
+
+    <section xml:id="breaks">
+      <title>Breaks</title>
+      <para><literal>break-before: 'column</literal> and <literal>break-after: 'column</literal> go on in the next
+        column of a column set; outside one there is one column, and they go on on a new page (since 0.4.0). A set to
+        be balanced that has a column break on its last page is not balanced: the explicit break wins.</para>
+    </section>
+
+    <section xml:id="graphics">
+      <title>External graphics</title>
+      <para><literal>scale</literal>: <literal>'max-uniform</literal> (the initial value) is the largest uniform scale
+        within <literal>max-width</literal> and <literal>max-height</literal>, <literal>'max</literal> each direction on
+        its own, numbers as they are. A graphic may overflow its line (since 0.3.1).</para>
+    </section>
+  </chapter>
+
+  <chapter xml:id="page-model">
+    <title>The page model</title>
+    <para>The standard divides the full page model into features (12.1): <literal>page</literal> allows the
+      <literal>page-sequence</literal> and <literal>column-set-sequence</literal> flow object classes,
+      <literal>multi-column</literal> column sets of more than one column, <literal>nested-column-set</literal> a
+      column set within a column set. Dazzle.Pdf has <literal>page</literal> and <literal>multi-column</literal>,
+      both restricted as below, and not <literal>nested-column-set</literal> (since 0.6.0, on OpenJade 1.4.0).</para>
+    <para>The C++ original reads <literal>define-page-model</literal> and <literal>define-column-set-model</literal>
+      and skips them, and has neither flow object class. The C# port of OpenJade takes them as an addition of its own
+      (<filename>src/OpenJade/Style/PageModel.cs</filename>) and gives the backend the models through
+      <literal>FOTBuilder</literal>.</para>
+    <programlisting language="dsssl">(define-page-model first
+  (width 595pt) (height 842pt)
+  (region (x-origin 70pt) (y-origin 56pt) (width 469pt) (height 600pt)))
+(define-page-model other
+  (width 595pt) (height 842pt)
+  (region (x-origin 70pt) (y-origin 56pt) (width 469pt) (height 730pt)))
+(define-column-set-model two
+  (column-subset (column (x-origin 0pt) (width 220pt))
+                 (column (x-origin 249pt) (width 220pt))
+                 (balance? #t)))
+
+(root (make page-sequence
+        initial-page-models: (list first)
+        repeat-page-models: (list other)
+        (process-children)))
+(element section (make column-set-sequence column-set-model: two
+                   (process-children)))</programlisting>
+    <para>Whatever lies outside the subset is an error at its place in the stylesheet; a characteristic outside it is
+      allowed only with its initial value. Nothing is passed over silently, or a stylesheet would be set otherwise than
+      it asks without anyone noticing.</para>
+
+    <section xml:id="page-model-definition">
+      <title>Page models (12.6.4.1)</title>
+      <informaltable>
+        <tgroup cols="2">
+          <thead>
+            <row><entry>Part of the standard</entry><entry>In Dazzle.Pdf</entry></row>
+          </thead>
+          <tbody>
+            <row><entry><literal>width</literal>, <literal>height</literal> of the model</entry><entry>required: the size of the page</entry></row>
+            <row><entry><literal>filling-direction</literal></entry><entry><literal>'top-to-bottom</literal> only</entry></row>
+            <row><entry><literal>region</literal></entry><entry>exactly one</entry></row>
+            <row><entry><literal>x-origin</literal>, <literal>y-origin</literal>, <literal>width</literal>, <literal>height</literal> of the region</entry>
+              <entry>required; the origin is at the lower left and y goes up (12.3.1), so <literal>y-origin</literal> is the bottom margin</entry></row>
+            <row><entry><literal>flow</literal> of the region</entry><entry>absent or <literal>(flow #f)</literal>: the principal port</entry></row>
+            <row><entry><literal>header</literal>, <literal>footer</literal>, <literal>decorate</literal>, further regions</entry><entry>an error</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+    </section>
+
+    <section xml:id="page-sequence">
+      <title>The <literal>page-sequence</literal> flow object class (12.6.4)</title>
+      <para><literal>initial-page-models</literal> and <literal>repeat-page-models</literal> are lists of page models.
+        <literal>force-last-page</literal>, <literal>force-first-page</literal>, <literal>first-page-type</literal>,
+        <literal>blank-back-page-model</literal>, <literal>blank-front-page-model</literal>,
+        <literal>justify-spread?</literal>, <literal>binding-edge</literal> and <literal>page-category</literal> take
+        their initial values only.</para>
+      <para><emphasis>A reading:</emphasis> the standard says only that the models are used for the initial pages and
+        for the pages after them. In Dazzle.Pdf the k-th page takes the k-th model of
+        <literal>initial-page-models</literal>, and the pages after them go round
+        <literal>repeat-page-models</literal>. More pages than models with an empty
+        <literal>repeat-page-models</literal> are an error: there shall be an applicable page model for every page.</para>
+      <para>Like a <literal>simple-page-sequence</literal>, a <literal>page-sequence</literal> is a child of the root.
+        Both may be used in one document.</para>
+    </section>
+
+    <section xml:id="column-set-sequence">
+      <title>The <literal>column-set-sequence</literal> flow object class (12.6.5)</title>
+      <para><literal>column-set-model</literal> is required and not <literal>#f</literal>;
+        <literal>column-set-model-map</literal> is empty only. <literal>space-before</literal>,
+        <literal>space-after</literal>, <literal>keep-with-previous?</literal> and <literal>keep-with-next?</literal>
+        are as on a <literal>display-group</literal>; <literal>break-before</literal> and
+        <literal>break-after</literal> take <literal>'page</literal>, <literal>'column</literal> and
+        <literal>#f</literal>. <literal>span</literal>, <literal>span-weak?</literal>,
+        <literal>position-preference</literal>, <literal>keep</literal>, <literal>may-violate-keep-before?</literal>
+        and <literal>may-violate-keep-after?</literal> take their initial values only. A
+        <literal>column-set-sequence</literal> within a <literal>column-set-sequence</literal> is an error.</para>
+    </section>
+
+    <section xml:id="column-set-model">
+      <title>Column-set models (12.6.5.1)</title>
+      <informaltable>
+        <tgroup cols="2">
+          <thead>
+            <row><entry>Part of the standard</entry><entry>In Dazzle.Pdf</entry></row>
+          </thead>
+          <tbody>
+            <row><entry><literal>column-subset</literal></entry><entry>exactly one</entry></row>
+            <row><entry><literal>column</literal></entry><entry>one or more, each with <literal>x-origin</literal> and <literal>width</literal> (required for <literal>'top-to-bottom</literal> by [218]), from the left edge of the column set</entry></row>
+            <row><entry><literal>flow</literal> of the subset</entry><entry>absent or <literal>(flow ((#f body-text)))</literal></entry></row>
+            <row><entry><literal>balance?</literal></entry><entry>yes; an explicit column break in the last column set wins over it</entry></row>
+            <row><entry><literal>fill-out</literal></entry><entry><literal>#f</literal> only: the set ends below its longest column</entry></row>
+            <row><entry><literal>width</literal> of the model</entry><entry>allowed; without it the width of the area around</entry></row>
+            <row><entry><literal>length-deviation</literal></entry><entry><literal>0pt</literal> only</entry></row>
+            <row><entry><literal>tie</literal>, further subsets, the zones <literal>top-float</literal>, <literal>bottom-float</literal>, <literal>footnote</literal>, <literal>justify?</literal>, <literal>justify-limit</literal>, <literal>justify-last-limit</literal>, <literal>length-decrease-order</literal>, <literal>align-lines?</literal>, <literal>top-float-space-below</literal>, <literal>bottom-float-space-above</literal>, <literal>height</literal>, <literal>decorate</literal>, headers, footers and footnote separators of columns</entry><entry>an error</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+    </section>
+
+    <section xml:id="models-per-document">
+      <title>Models that depend on the document</title>
+      <para>Page and column-set models are top-level definitions, and the standard does not say what
+        <literal>current-node</literal> or <literal>current-root</literal> return in them; a model cannot read its
+        margins from the document. Where the geometry comes with the document, the program that calls Dazzle writes the
+        models into a style specification of their own and takes the rules from the fixed stylesheet with the means the
+        standard has for it, <literal>external-specification</literal> and <literal>use</literal>.</para>
+    </section>
+  </chapter>
+</book>

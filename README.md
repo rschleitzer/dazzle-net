@@ -6,6 +6,9 @@ style engine — the C# port of James Clark's original — and adds two things
 the original does not have: a flow object class for writing whole directory
 trees, and a PDF backend.
 
+What the packages add to DSSSL, where they read the standard where it leaves room, and which of its
+optional parts they have, is described in [`docs/dazzle.xml`](docs/dazzle.xml) (DocBook).
+
 ## Packages
 
 | Package | What it is |
