@@ -40,15 +40,25 @@
         </tbody>
       </tgroup>
     </informaltable>
-    <para>All target .NET 10. From a program, Dazzle.Pdf sets a document with <literal>DssslProcessor</literal>:</para>
+    <para>All target .NET 10. The tool is installed with <command>dotnet tool install -g Dazzle.Cli</command>:</para>
+    <programlisting>dazzle [options] DSSSL-spec document
+  -t type    output type: sgml, xml, pdf
+  -o file    output file
+  -d spec    DSSSL specification
+  -V var     define a variable
+  -c catalog use an SGML catalog</programlisting>
+    <para>From a program, Dazzle.Pdf sets a document with <literal>DssslProcessor</literal>:</para>
     <programlisting language="csharp">using Dazzle.Pdf;
 
 DssslProcessor.GeneratePdf("document.xml", "stylesheet.dsl", "document.pdf");
 byte[] pdf = DssslProcessor.GeneratePdfBytes("document.xml", "stylesheet.dsl");
 PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "stylesheet.dsl");</programlisting>
-    <para>Every call takes an optional path to an SGML catalog; without one the bundled catalog is used. An error in
-      the document, the stylesheet or the formatting throws <literal>DssslProcessingException</literal> with the
-      messages and their places (<xref linkend="errors"/>).</para>
+    <para>A further overload of <literal>GeneratePdf</literal> writes to a <literal>Stream</literal>. Every call takes
+      an optional path to an SGML catalog; without one the bundled catalog is used. An error in the document, the
+      stylesheet or the formatting throws <literal>DssslProcessingException</literal> with the messages and their places
+      (<xref linkend="errors"/>).</para>
+    <para>The fonts come from PDFsharp's font resolver: the one the program sets in
+      <literal>GlobalFontSettings.FontResolver</literal>, else the fonts of the system.</para>
   </chapter>
 
   <chapter xml:id="extensions">
@@ -160,7 +170,57 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
         that draws on the PDF afterwards can place things relative to an element.</para>
       <para>The locations come from the marks the backend sets for every element processed in the initial processing
         mode, the same marks <literal>current-node-page-number-sosofo</literal> reads; an element processed only in a
-        named mode has none. A mark has no height and holds no line. Since Dazzle.Pdf 0.3.0.</para>
+        named mode has none. A mark has no height and holds no line. The top of a first line is below the element's
+        <literal>space-before</literal>. Since Dazzle.Pdf 0.3.0.</para>
+    </section>
+  </chapter>
+
+  <chapter xml:id="coverage">
+    <title>What Dazzle.Pdf sets</title>
+    <para>Dazzle.Pdf sets the pages itself and writes them with PDFsharp: blocks flow down the page, paragraphs are
+      broken into lines, tables are set row by row, and the flow object tree is laid out twice so that
+      <literal>current-node-page-number-sosofo</literal> knows its page. That is enough to set a book with the DocBook
+      print stylesheets.</para>
+
+    <section xml:id="classes-set">
+      <title>Flow object classes it sets</title>
+      <itemizedlist>
+        <listitem><para><literal>simple-page-sequence</literal> with its header and footer parts,
+          <literal>page-sequence</literal> and <literal>column-set-sequence</literal> (<xref linkend="page-model"/>);</para></listitem>
+        <listitem><para><literal>display-group</literal>, <literal>paragraph</literal>, <literal>paragraph-break</literal>,
+          <literal>sequence</literal>, <literal>scroll</literal>;</para></listitem>
+        <listitem><para><literal>line-field</literal>, <literal>leader</literal>, <literal>score</literal>,
+          <literal>box</literal>, <literal>rule</literal>, <literal>external-graphic</literal>;</para></listitem>
+        <listitem><para><literal>table</literal>, <literal>table-part</literal>, <literal>table-column</literal>,
+          <literal>table-row</literal>, <literal>table-cell</literal> and <literal>table-border</literal>: columns and
+          rows spanned, borders of the table and of its cells, header rows again on every page, tables in cells;</para></listitem>
+        <listitem><para>the page number of the current page and of the current node.</para></listitem>
+      </itemizedlist>
+    </section>
+
+    <section xml:id="classes-passed-over">
+      <title>What it passes over</title>
+      <para>Outside the page model Dazzle.Pdf does what the other backends of Jade do with what they do not have: it
+        passes it over, without a message.</para>
+      <itemizedlist>
+        <listitem><para>A flow object of a class it does not set shows its content as a <literal>sequence</literal>
+          would, in the place where it stands: <literal>link</literal> (no link in the PDF), <literal>marginalia</literal>
+          and <literal>sideline</literal> (in the text, not beside it), <literal>multi-mode</literal>, the math classes
+          and <literal>grid</literal>.</para></listitem>
+        <listitem><para><literal>alignment-point</literal>, <literal>formatting-instruction</literal> and the flow
+          object classes of extensions other than its own set nothing.</para></listitem>
+        <listitem><para>Characteristics it does not read keep their value without effect. Among them:
+          <literal>hyphenate?</literal> (a line breaks only where the text has a space or a hyphen,
+          <xref linkend="lines"/>), <literal>widow-count</literal>, <literal>orphan-count</literal>,
+          <literal>keep</literal>, <literal>keep-with-previous?</literal> (only <literal>keep-with-next?</literal>
+          holds a block to the next), <literal>may-violate-keep-before?</literal>,
+          <literal>may-violate-keep-after?</literal>, <literal>last-line-quadding</literal>,
+          <literal>line-dash</literal>, <literal>line-cap</literal>, <literal>line-join</literal>,
+          <literal>box-type</literal>, <literal>box-corner-radius</literal>, <literal>kern?</literal>,
+          <literal>ligature?</literal>, <literal>language</literal> and <literal>country</literal>.</para></listitem>
+      </itemizedlist>
+      <para>In the page model it is the other way round: what lies outside the subset fails the run
+        (<xref linkend="page-model"/>).</para>
     </section>
   </chapter>
 
@@ -198,6 +258,9 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
     <section xml:id="lines">
       <title>Lines</title>
       <itemizedlist>
+        <listitem><para><literal>line-spacing</literal> is the distance of the lines: exactly that with
+          <literal>min-leading: #f</literal> (the initial value), otherwise at least that and the height of the line's
+          text plus <literal>min-leading</literal>.</para></listitem>
         <listitem><para>Below the placement path of a line is the descent of its text, or
           <literal>min-post-line-spacing</literal> where that is more; the rest of the line spacing is above (since
           0.4.0; before, the characteristic had no effect). With <literal>min-pre-line-spacing</literal> alone, that
@@ -211,14 +274,53 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
         <listitem><para>A line breaks at a space, after a soft hyphen (which then shows) and after a hyphen between
           letters, also where the letters are in different runs. A line breaks only once it holds something: a first
           word wider than the line overflows it.</para></listitem>
+        <listitem><para>Under <literal>'preserve</literal>, where <literal>lines: 'wrap</literal> wraps a line it still
+          breaks at the kept spaces.</para></listitem>
       </itemizedlist>
     </section>
 
+    <section xml:id="display-space">
+      <title>Space between blocks</title>
+      <para>Display space collapses to the larger of the space after one block and the space before the next.
+        <literal>conditional?</literal> space is dropped at the start of an area: the top of a page, of a column, of a
+        table cell.</para>
+    </section>
+
     <section xml:id="breaks">
-      <title>Breaks</title>
+      <title>Breaks and keeps</title>
       <para><literal>break-before: 'column</literal> and <literal>break-after: 'column</literal> go on in the next
         column of a column set; outside one there is one column, and they go on on a new page (since 0.4.0). A set to
         be balanced that has a column break on its last page is not balanced: the explicit break wins.</para>
+      <para><literal>keep-with-next?: #t</literal> holds a block on the page of the block after it; a run of such
+        blocks moves to the next page together, as does a table row that does not fit.</para>
+    </section>
+
+    <section xml:id="tables">
+      <title>Tables</title>
+      <itemizedlist>
+        <listitem><para>The cell margins are the distance between the edges of a cell and its content.</para></listitem>
+        <listitem><para>A cell is placed in the column after the previous cell of its row unless its
+          <literal>column-number</literal> says otherwise, also under a cell spanning rows.</para></listitem>
+        <listitem><para>The backgrounds of table cells lie under the contents and borders of every table on the page
+          (since 0.3.1).</para></listitem>
+        <listitem><para>A table row is as high as its cells ask, unless <literal>min-row-height</literal> or
+          <literal>row-height</literal> say more (<xref linkend="row-height"/>).</para></listitem>
+      </itemizedlist>
+    </section>
+
+    <section xml:id="score">
+      <title>Score and line fields</title>
+      <para><literal>score</literal> draws its line after (<literal>'after</literal>), through or before the text, or
+        at a length below it, over the spaces only with <literal>score-spaces?: #t</literal>. A line field in a
+        <literal>score</literal> is scored over its whole width (since 0.3.1).</para>
+    </section>
+
+    <section xml:id="headers-footers">
+      <title>Headers and footers</title>
+      <para>The header and footer parts of a <literal>simple-page-sequence</literal> are set as blocks across the width
+        of the page body, the <literal>center-</literal> and <literal>right-</literal> parts aligned to the middle and
+        the end. They stand at <literal>header-margin</literal> from the top and <literal>footer-margin</literal> from
+        the bottom of the page, and without these in the middle of the margin.</para>
     </section>
 
     <section xml:id="graphics">
@@ -258,8 +360,8 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
 (element section (make column-set-sequence column-set-model: two
                    (process-children)))</programlisting>
     <para>Whatever lies outside the subset is an error at its place in the stylesheet; a characteristic outside it is
-      allowed only with its initial value. Nothing is passed over silently, or a stylesheet would be set otherwise than
-      it asks without anyone noticing.</para>
+      allowed only with its initial value. Unlike elsewhere (<xref linkend="classes-passed-over"/>), nothing of the page
+      model is passed over silently: a page set on another geometry than the stylesheet asks for would go unnoticed.</para>
 
     <section xml:id="page-model-definition">
       <title>Page models (12.6.4.1)</title>
