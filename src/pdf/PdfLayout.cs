@@ -916,9 +916,15 @@ internal sealed class PdfLayout
             height = Math.Max(height, natural + Pt(p.MinLeading.Value));
         if (image > 0)
             height = Math.Max(height, image + descent);
-        MakeRoom(height, paraKeep_);
+        // Below the placement path: the descent, or min-post-line-spacing where that is more; with min-pre-line-spacing alone,
+        // the rest of the line below the space it asks above. A line area is min-pre-line-spacing before and
+        // min-post-line-spacing after its placement path (12.6.6.1), the line spacing beyond that is space between lines; at the
+        // end of an area the line needs only its own extent down to its descent, and the rest of min-post-line-spacing may lie
+        // past the end (as word processors do with the extra of a multiple line spacing)
+        var below = p.MinPostLineSpacing.HasValue ? Math.Max(descent, Pt(p.MinPostLineSpacing.Value))
+            : p.MinPreLineSpacing.HasValue ? Math.Max(descent, height - Pt(p.MinPreLineSpacing.Value)) : descent;
+        MakeRoom(height - (p.MinPostLineSpacing.HasValue ? below - descent : 0), paraKeep_);
         var top = area_.Y;
-        var below = p.MinPostLineSpacing.HasValue ? Math.Max(descent, Pt(p.MinPostLineSpacing.Value)) : descent;
         var baseline = top + height - below;
         var width = LineWidth(from, to, indent);
         double x = area_.X + indent, extra = 0, fill = 0;

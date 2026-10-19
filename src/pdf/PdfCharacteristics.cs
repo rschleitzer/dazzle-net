@@ -35,6 +35,9 @@ public class PdfCharacteristics
     // min-post-line-spacing: the space below the placement path of a line is at least this, the
     // rest of the line's height is above (#f: the descent of its text, the rest above)
     public long? MinPostLineSpacing { get; set; } = null;
+    // min-pre-line-spacing: the space above the placement path of a line is at least this, the rest of the line's height is below
+    // (#f: as min-post-line-spacing and the descent leave it)
+    public long? MinPreLineSpacing { get; set; } = null;
 
     // Alignment
     public Symbol Quadding { get; set; } = Symbol.symbolStart;

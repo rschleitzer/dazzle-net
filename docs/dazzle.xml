@@ -200,8 +200,14 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
       <itemizedlist>
         <listitem><para>Below the placement path of a line is the descent of its text, or
           <literal>min-post-line-spacing</literal> where that is more; the rest of the line spacing is above (since
-          0.4.0; before, the characteristic had no effect). <literal>min-pre-line-spacing</literal> has no effect
-          yet.</para></listitem>
+          0.4.0; before, the characteristic had no effect). With <literal>min-pre-line-spacing</literal> alone, that
+          much is above the placement path and the rest of the line spacing below (since 0.7.0).</para></listitem>
+        <listitem><para><emphasis>A reading:</emphasis> a line area is <literal>min-pre-line-spacing</literal> before
+          and <literal>min-post-line-spacing</literal> after its placement path, and the line spacing beyond that is
+          space between lines (12.6.6.1). At the end of an area the last line therefore needs only its extent down to
+          the descent of its text; the rest of <literal>min-post-line-spacing</literal> may lie past the end. Word
+          processors do the same with the extra of a multiple line spacing; a line of exact height, whose space below
+          the path is the rest of its line spacing, has to fit whole (since 0.7.0).</para></listitem>
         <listitem><para>A line breaks at a space, after a soft hyphen (which then shows) and after a hyphen between
           letters, also where the letters are in different runs. A line breaks only once it holds something: a first
           word wider than the line overflows it.</para></listitem>

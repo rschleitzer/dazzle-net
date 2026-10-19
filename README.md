@@ -84,7 +84,13 @@ them:
   (the initial value), at least that and the height of the line's text plus
   `min-leading` otherwise; below the placement path of a line is the descent of
   its text, or `min-post-line-spacing` where that is more, and the rest of the
-  line spacing is above;
+  line spacing is above; with `min-pre-line-spacing` alone, that much is above
+  and the rest below;
+- a line area is `min-pre-line-spacing` before and `min-post-line-spacing` after
+  its placement path (12.6.6.1): at the end of an area the last line needs only
+  its extent down to the descent of its text, and the rest of
+  `min-post-line-spacing` may lie past the end, as word processors do with the
+  extra of a multiple line spacing (since 0.7.0);
 - display space collapses to the larger of the space after one block and the
   space before the next, and `conditional?` space is dropped at the start of an
   area — the top of a page, a table cell;

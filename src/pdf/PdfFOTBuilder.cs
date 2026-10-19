@@ -664,6 +664,7 @@ public class PdfFOTBuilder : FOTBuilder
         public override void setLineSpacing(LengthSpec s) => parent_.setLineSpacing(s);
         public override void setMinLeading(OptLengthSpec l) => parent_.setMinLeading(l);
         public override void setMinPostLineSpacing(OptLengthSpec s) => parent_.setMinPostLineSpacing(s);
+        public override void setMinPreLineSpacing(OptLengthSpec s) => parent_.setMinPreLineSpacing(s);
         public override void setQuadding(Symbol q) => parent_.setQuadding(q);
         public override void setDisplayAlignment(Symbol a) => parent_.setDisplayAlignment(a);
         public override void setFieldWidth(LengthSpec w) => parent_.setFieldWidth(w);
@@ -985,6 +986,8 @@ public class PdfFOTBuilder : FOTBuilder
     public override void setLineSpacing(LengthSpec spacing) => current_.LineSpacing = spacing.length;
     public override void setMinLeading(OptLengthSpec leading) =>
         current_.MinLeading = leading.hasLength ? leading.length.length : null;
+    public override void setMinPreLineSpacing(OptLengthSpec spacing) =>
+        current_.MinPreLineSpacing = spacing.hasLength ? spacing.length.length : null;
     public override void setMinPostLineSpacing(OptLengthSpec spacing) =>
         current_.MinPostLineSpacing = spacing.hasLength ? spacing.length.length : null;
 
