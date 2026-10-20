@@ -843,7 +843,10 @@ internal sealed class PdfLayout
                     next = to + 1;
                     break;
                 }
-                if (wraps && held && a.Kind != AtomKind.Mark && LineWidth(from, to + 1, indent) > available + 0.001)
+                // a space that runs past the edge does not break the line: it stays at the end of the line as Word leaves it
+                // hanging there, and the line breaks there when the next text does not fit
+                if (wraps && held && a.Kind != AtomKind.Mark && !(a.Kind == AtomKind.Space && a.Breakable)
+                    && LineWidth(from, to + 1, indent) > available + 0.001)
                 {
                     if (breakAt > from)
                     {
