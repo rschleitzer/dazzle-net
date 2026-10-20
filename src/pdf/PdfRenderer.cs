@@ -107,7 +107,20 @@ public class PdfRenderer
                     switch (op.Kind)
                     {
                         case PdfLayout.OpKind.Text:
-                            gfx.DrawString(op.Text!, op.Font!, new XSolidBrush(op.Color), op.X, op.Y, XStringFormats.BaseLineLeft);
+                            if (op.Spacing == 0)
+                                gfx.DrawString(op.Text!, op.Font!, new XSolidBrush(op.Color), op.X, op.Y, XStringFormats.BaseLineLeft);
+                            else
+                            {
+                                // letter-spacing: each character on its own, the spacing after it
+                                var brush = new XSolidBrush(op.Color);
+                                var cx = op.X;
+                                foreach (var rune in op.Text!.EnumerateRunes())
+                                {
+                                    var s = rune.ToString();
+                                    gfx.DrawString(s, op.Font!, brush, cx, op.Y, XStringFormats.BaseLineLeft);
+                                    cx += gfx.MeasureString(s, op.Font!).Width + op.Spacing;
+                                }
+                            }
                             break;
                         case PdfLayout.OpKind.Line:
                             if (op.Thickness > 0)

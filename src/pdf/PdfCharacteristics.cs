@@ -94,6 +94,12 @@ public class PdfCharacteristics
     // Dazzle extension characteristics (see PdfFOTBuilder.GetExtensions)
     public long MinRowHeight { get; set; } = 0;
     public long RowHeight { get; set; } = 0;
+    // grows-line?: whether an inline graphic makes its line taller where it does not fit (#f: it reaches beyond, as a word
+    // processor's form field box does)
+    public bool GrowsLine { get; set; } = true;
+    // letter-spacing: space added after every character of the text, also after the last and after a space (negative narrows),
+    // as a word processor's character spacing
+    public long LetterSpacing { get; set; } = 0;
     // column-set and balance-columns?: what a display-group sets up its columns with; ColumnSetHere
     // says that the flow object being started specified column-set itself, not inherited it
     public string? ColumnSet { get; set; } = null;

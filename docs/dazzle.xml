@@ -161,6 +161,50 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
       <para>Since Dazzle.Pdf 0.5.0.</para>
     </section>
 
+    <section xml:id="grows-line">
+      <title>An inline graphic beyond its line: <literal>grows-line?</literal></title>
+      <para>An <literal>external-graphic</literal> set inline makes its line as tall as it needs, above the placement
+        path as high as the graphic, below it as deep as its <literal>position-point-shift</literal> lowers it. With
+        <literal>grows-line?: #f</literal> it leaves the line as its text and line spacing make it and reaches beyond,
+        above or below, as a word processor draws a form field box that is taller than the reduced spacing of its
+        line.</para>
+      <informaltable>
+        <tgroup cols="3">
+          <thead><row><entry>Characteristic</entry><entry>Value</entry><entry>Meaning</entry></row></thead>
+          <tbody>
+            <row><entry><literal>grows-line?</literal></entry><entry>boolean, initial <literal>#t</literal></entry><entry>whether an inline graphic makes its line taller</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+      <programlisting language="dsssl">(declare-characteristic grows-line?
+  "UNREGISTERED::Dazzle//Characteristic::grows-line?" #t)
+
+(make sequence position-point-shift: -1.8pt grows-line?: #f
+  (make external-graphic entity-system-id: "box.pdf" display?: #f))</programlisting>
+      <para>Since Dazzle.Pdf 0.8.0.</para>
+    </section>
+
+    <section xml:id="letter-spacing">
+      <title>Character spacing: <literal>letter-spacing</literal></title>
+      <para><literal>letter-spacing</literal> adds a length after every character of the text: also after
+        the last character of a word, after a space and after the hyphen of a soft hyphen that breaks the line. A negative
+        length narrows the text. The words are as much wider as they are drawn, so the line breaks where the spaced text
+        ends, as a word processor's character spacing does.</para>
+      <informaltable>
+        <tgroup cols="3">
+          <thead><row><entry>Characteristic</entry><entry>Value</entry><entry>Meaning</entry></row></thead>
+          <tbody>
+            <row><entry><literal>letter-spacing</literal></entry><entry>length, initial <literal>0pt</literal>, inherited</entry><entry>the space after every character</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+      <programlisting language="dsssl">(declare-characteristic letter-spacing
+  "UNREGISTERED::Dazzle//Characteristic::letter-spacing" 0pt)
+
+(make sequence letter-spacing: 2pt (literal "spaced"))</programlisting>
+      <para>Since Dazzle.Pdf 0.8.0.</para>
+    </section>
+
     <section xml:id="locations">
       <title>Where elements begin</title>
       <para>Not a part of the language but of the program interface of Dazzle.Pdf:
@@ -190,7 +234,9 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
         <listitem><para><literal>display-group</literal>, <literal>paragraph</literal>, <literal>paragraph-break</literal>,
           <literal>sequence</literal>, <literal>scroll</literal>;</para></listitem>
         <listitem><para><literal>line-field</literal>, <literal>leader</literal>, <literal>score</literal>,
-          <literal>box</literal>, <literal>rule</literal>, <literal>external-graphic</literal>;</para></listitem>
+          <literal>box</literal>, <literal>rule</literal>, <literal>external-graphic</literal> (a bitmap, or a PDF whose first
+          page is drawn as a vector form; inline it is raised or lowered by <literal>position-point-shift</literal> like
+          text, since 0.8.0);</para></listitem>
         <listitem><para><literal>table</literal>, <literal>table-part</literal>, <literal>table-column</literal>,
           <literal>table-row</literal>, <literal>table-cell</literal> and <literal>table-border</literal>: columns and
           rows spanned, borders of the table and of its cells, header rows again on every page, tables in cells;</para></listitem>

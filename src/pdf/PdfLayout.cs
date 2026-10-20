@@ -42,6 +42,7 @@ internal sealed class PdfLayout
         public string? Text;
         public XFont? Font;
         public string? Path;
+        public double Spacing;              // letter-spacing of a text: after every character
         public bool Background;             // the background of a table cell
 
         public void Shift(double dx, double dy)
@@ -668,6 +669,8 @@ internal sealed class PdfLayout
     {
         var font = fonts_.Font(c);
         bool verbatim = c.Verbatim;
+        // letter-spacing comes after every character, also after a space
+        var ls = Pt(c.LetterSpacing);
         var word = new System.Text.StringBuilder();
         // the text before this run in the paragraph, past location marks: a word may continue across runs
         Atom? before = null;
@@ -681,7 +684,7 @@ internal sealed class PdfLayout
         {
             if (word.Length == 0) return;
             var s = word.ToString();
-            atoms_.Add(new Atom { Kind = AtomKind.Text, Chars = c, Font = font, Text = s, Width = fonts_.Width(s, font) });
+            atoms_.Add(new Atom { Kind = AtomKind.Text, Chars = c, Font = font, Text = s, Width = fonts_.Width(s, font) + s.EnumerateRunes().Count() * ls });
             word.Clear();
         }
         foreach (var ch in text)
@@ -703,7 +706,7 @@ internal sealed class PdfLayout
                     // outside verbatim text a run of white space is one space, also across runs
                     if (!verbatim && atoms_.Count > paraBase_ && atoms_[^1].Kind == AtomKind.Space && !atoms_[^1].Chars.Verbatim)
                         break;
-                    atoms_.Add(new Atom { Kind = AtomKind.Space, Chars = c, Font = font, Width = fonts_.Width(" ", font), Breakable = !verbatim || c.Wraps, Stretches = true });
+                    atoms_.Add(new Atom { Kind = AtomKind.Space, Chars = c, Font = font, Width = fonts_.Width(" ", font) + ls, Breakable = !verbatim || c.Wraps, Stretches = true });
                     break;
                 case '\u200B':
                     Word();
@@ -711,7 +714,7 @@ internal sealed class PdfLayout
                     break;
                 case '\u00AD':
                     Word();
-                    atoms_.Add(new Atom { Kind = AtomKind.SoftHyphen, Chars = c, Font = font, Width = fonts_.Width("-", font) });
+                    atoms_.Add(new Atom { Kind = AtomKind.SoftHyphen, Chars = c, Font = font, Width = fonts_.Width("-", font) + ls });
                     break;
                 case '\u200C':
                 case '\u200D':
@@ -890,7 +893,7 @@ internal sealed class PdfLayout
     // Set one line of a paragraph at the place of the next block
     private void SetLine(PdfCharacteristics p, int from, int to, double indent, double available, bool last)
     {
-        double natural = 0, descent = 0, image = 0;
+        double natural = 0, descent = 0, image = 0, imageBelow = 0;
         int spaces = 0, leaders = 0;
         bool text = false;
         for (int i = from; i < to; i++)
@@ -903,7 +906,13 @@ internal sealed class PdfLayout
                 natural = Math.Max(natural, fonts_.LineHeight(a.Font));
                 descent = Math.Max(descent, fonts_.Descent(a.Font) - Pt(a.Chars.PositionPointShift));
             }
-            if (a.Kind == AtomKind.Image) image = Math.Max(image, a.Height);
+            if (a.Kind == AtomKind.Image && a.Chars.GrowsLine)
+            {
+                // position-point-shift moves an inline graphic like text: what it lowers below the placement path is descent
+                var shift = Pt(a.Chars.PositionPointShift);
+                image = Math.Max(image, a.Height + shift);
+                imageBelow = Math.Max(imageBelow, -shift);
+            }
             if (a.Kind == AtomKind.Space && a.Stretches && i > from) spaces++;
             if (a.Kind == AtomKind.Leader) leaders++;
         }
@@ -913,6 +922,7 @@ internal sealed class PdfLayout
             natural = fonts_.LineHeight(font);
             descent = fonts_.Descent(font);
         }
+        descent = Math.Max(descent, imageBelow);
         // the line spacing: exactly, or at least with min-leading
         var height = Pt(p.LineSpacing);
         if (p.MinLeading.HasValue)
@@ -983,7 +993,8 @@ internal sealed class PdfLayout
                     }
                     else
                         EndScore();
-                    area_.Ops.Add(new Op { Kind = OpKind.Text, X = x, Y = baseline - Pt(c.PositionPointShift), Text = a.Text, Font = a.Font, Color = ColorOf(c) });
+                    area_.Ops.Add(new Op { Kind = OpKind.Text, X = x, Y = baseline - Pt(c.PositionPointShift), Text = a.Text, Font = a.Font, Color = ColorOf(c),
+                        Spacing = Pt(c.LetterSpacing) });
                     x += a.Width;
                     break;
                 }
@@ -1017,7 +1028,7 @@ internal sealed class PdfLayout
                 }
                 case AtomKind.Image:
                     EndScore();
-                    area_.Ops.Add(new Op { Kind = OpKind.Image, X = x, Y = baseline - a.Height, W = a.Width, H = a.Height, Path = a.Text });
+                    area_.Ops.Add(new Op { Kind = OpKind.Image, X = x, Y = baseline - a.Height - Pt(a.Chars.PositionPointShift), W = a.Width, H = a.Height, Path = a.Text });
                     x += a.Width;
                     break;
                 case AtomKind.Mark:

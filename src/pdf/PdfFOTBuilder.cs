@@ -920,6 +920,19 @@ public class PdfFOTBuilder : FOTBuilder
             {
                 pubid = CharacteristicPrefix + "first-page-bottom-margin",
                 lengthSetter = (fotb, n) => Of(fotb).current_.FirstPageBottomMargin = n
+            },
+            // whether an inline external-graphic makes its line taller where it does not fit (#t, the initial value); with #f it
+            // leaves the line as its text and line spacing make it and reaches beyond, above or below (with position-point-shift)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "grows-line?",
+                boolSetter = (fotb, v) => Of(fotb).current_.GrowsLine = v
+            },
+            // space added after every character of the text, also after the last and after a space; negative narrows
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "letter-spacing",
+                lengthSetter = (fotb, n) => Of(fotb).current_.LetterSpacing = n
             }
         };
     }
