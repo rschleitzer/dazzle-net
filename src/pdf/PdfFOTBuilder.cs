@@ -651,6 +651,8 @@ public class PdfFOTBuilder : FOTBuilder
         public override void externalGraphic(ExternalGraphicNIC nic) => parent_.externalGraphic(nic);
         public override void pageNumber() => parent_.pageNumber();
         public override void currentNodePageNumber(NodePtr node) => parent_.currentNodePageNumber(node);
+        // the elements of a header or footer row have their place as those of the body
+        public override void startNode(NodePtr node, StringC processingMode) => parent_.startNode(node, processingMode);
 
         // Forward characteristic setters
         public override void setFontSize(long size) => parent_.setFontSize(size);
