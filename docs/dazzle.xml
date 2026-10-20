@@ -234,6 +234,35 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
       <para>Since Dazzle.Pdf 0.10.0.</para>
     </section>
 
+    <section xml:id="justify-squeeze">
+      <title>Squeezing justified lines: <literal>justify-squeeze</literal>, <literal>justify-squeeze-word</literal>,
+        <literal>justify-squeeze-hyphen</literal></title>
+      <para>A justified line breaks before the first word that does not fit, and its spaces are widened to fill it. Word
+        processors also narrow the spaces to fit one more word: Word in its compatibility mode 15 lets a justified line run
+        past the edge by a quarter of the width of each space between its words, but by no more than about a third of the
+        word that does not fit together with the space before it, and narrows the spaces by as much; to break at a soft
+        hyphen, by no more than about a third of the syllable before the hyphen.
+        <literal>justify-squeeze</literal> gives the share of each space in thousandths of its width (0, the initial value,
+        squeezes nothing), <literal>justify-squeeze-word</literal> the bound in thousandths of the word that does not fit,
+        from the last space the line could break at (0: no such bound), and <literal>justify-squeeze-hyphen</literal> the
+        bound at a soft hyphen in thousandths of the syllable before it, from the last place the line could break, the hyphen
+        not counted (0: no such bound). Only a paragraph with <literal>quadding: 'justify</literal> squeezes.</para>
+      <informaltable>
+        <tgroup cols="3">
+          <thead><row><entry>Characteristic</entry><entry>Value</entry><entry>Meaning</entry></row></thead>
+          <tbody>
+            <row><entry><literal>justify-squeeze</literal></entry><entry>integer, initial <literal>0</literal></entry><entry>thousandths of a space each space may give</entry></row>
+            <row><entry><literal>justify-squeeze-word</literal></entry><entry>integer, initial <literal>0</literal></entry><entry>thousandths of the word that does not fit, at most</entry></row>
+            <row><entry><literal>justify-squeeze-hyphen</literal></entry><entry>integer, initial <literal>0</literal></entry><entry>at a soft hyphen: thousandths of the syllable before it, at most</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+      <programlisting language="dsssl">(make paragraph quadding: 'justify justify-squeeze: 250 justify-squeeze-word: 343
+  justify-squeeze-hyphen: 330
+  (process-children))</programlisting>
+      <para>Since Dazzle.Pdf 0.11.0.</para>
+    </section>
+
     <section xml:id="locations">
       <title>Where elements begin</title>
       <para>Not a part of the language but of the program interface of Dazzle.Pdf:

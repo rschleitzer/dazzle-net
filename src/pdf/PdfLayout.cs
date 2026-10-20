@@ -835,7 +835,7 @@ internal sealed class PdfLayout
                 from++;
             if (from >= end) break;
             int to = from, next = -1;
-            int breakAt = -1, breakNext = -1;
+            int breakAt = -1, breakNext = -1, spaceAt = -1;
             bool ended = false;
             // a line breaks only after it holds something: a location mark at its start does not count, so a first word
             // wider than the line overflows it instead of leaving a line with only the mark
@@ -852,7 +852,7 @@ internal sealed class PdfLayout
                 // a space that runs past the edge does not break the line: it stays at the end of the line as Word leaves it
                 // hanging there, and the line breaks there when the next text does not fit
                 if (wraps && held && a.Kind != AtomKind.Mark && !(a.Kind == AtomKind.Space && a.Breakable)
-                    && LineWidth(from, to + 1, indent) > available + 0.001)
+                    && LineWidth(from, to + 1, indent) > available + Squeeze(p, from, to, spaceAt) + 0.001)
                 {
                     if (breakAt > from)
                     {
@@ -867,10 +867,10 @@ internal sealed class PdfLayout
                 }
                 if (a.Kind == AtomKind.Space && a.Breakable)
                 {
-                    breakAt = to;
+                    breakAt = spaceAt = to;
                     breakNext = to + 1;
                 }
-                else if (a.Kind == AtomKind.SoftHyphen && LineWidth(from, to + 1, indent) <= available + 0.001)
+                else if (a.Kind == AtomKind.SoftHyphen && LineWidth(from, to + 1, indent) <= available + HyphenSqueeze(p, from, to, breakAt) + 0.001)
                 {
                     breakAt = to + 1;     // the hyphen stays on the line
                     breakNext = to + 1;
@@ -967,12 +967,45 @@ internal sealed class PdfLayout
             x += (available - width) / 2;
         else if (quadding == Symbol.symbolJustify && !last && spaces > 0 && available > width)
             extra = (available - width) / spaces;
+        else if (quadding == Symbol.symbolJustify && spaces > 0 && width > available + 0.001 && p.JustifySqueeze > 0)
+            extra = (available - width) / spaces;      // justify-squeeze: the spaces narrowed so that the line fits
         if (p.HasBackgroundColor)
             area_.Ops.Add(new Op { Kind = OpKind.Rect, X = area_.X + Pt(p.StartIndent), Y = top,
                 W = area_.Width - Pt(p.StartIndent) - Pt(p.EndIndent), H = height,
                 Color = XColor.FromArgb(p.BackgroundR, p.BackgroundG, p.BackgroundB) });
         SetAtoms(from, to, x, baseline, top, extra, fill, area_.X);
         area_.Y = top + height;
+    }
+
+    // justify-squeeze: how far a justified line from..to may run past the edge, its spaces narrowed: the given thousandths of
+    // the width of each space between its words, and with justify-squeeze-word at most so many thousandths of the word that
+    // does not fit, from the last space the line could break at (with it) to the atom at to, also where a soft hyphen breaks it
+    private double Squeeze(PdfCharacteristics p, int from, int to, int spaceAt)
+    {
+        if (p.JustifySqueeze <= 0 || p.Quadding != Symbol.symbolJustify || spaceAt <= from) return 0;
+        double sum = 0;
+        for (int i = from + 1; i < to; i++)
+            if (atoms_[i].Kind == AtomKind.Space && atoms_[i].Stretches)
+                sum += atoms_[i].Width;
+        var squeeze = sum * p.JustifySqueeze / 1000.0;
+        if (p.JustifySqueezeWord > 0)
+            squeeze = Math.Min(squeeze, LineWidth(spaceAt, to + 1) * p.JustifySqueezeWord / 1000.0);
+        return squeeze;
+    }
+
+    // justify-squeeze at the soft hyphen at to: the share of the spaces, with justify-squeeze-hyphen at most so many thousandths
+    // of the syllable before the hyphen, from the last place the line could break (a space with it), the hyphen not counted
+    private double HyphenSqueeze(PdfCharacteristics p, int from, int to, int breakAt)
+    {
+        if (p.JustifySqueeze <= 0 || p.Quadding != Symbol.symbolJustify) return 0;
+        double sum = 0;
+        for (int i = from + 1; i < to; i++)
+            if (atoms_[i].Kind == AtomKind.Space && atoms_[i].Stretches)
+                sum += atoms_[i].Width;
+        var squeeze = sum * p.JustifySqueeze / 1000.0;
+        if (p.JustifySqueezeHyphen > 0)
+            squeeze = Math.Min(squeeze, LineWidth(breakAt > from ? breakAt : from, to) * p.JustifySqueezeHyphen / 1000.0);
+        return squeeze;
     }
 
     // The line height and the descent of a text: text-line-height and text-descent where they are set, else its font's

@@ -963,6 +963,24 @@ public class PdfFOTBuilder : FOTBuilder
             {
                 pubid = CharacteristicPrefix + "line-height-factor",
                 integerSetter = (fotb, n) => Of(fotb).current_.LineHeightFactor = n
+            },
+            // in thousandths of a space: how far a justified line may run past the edge, its spaces narrowed (0: not at all)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "justify-squeeze",
+                integerSetter = (fotb, n) => Of(fotb).current_.JustifySqueeze = n
+            },
+            // and at most so many thousandths of the word that does not fit, with the space before it (0: no such bound)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "justify-squeeze-word",
+                integerSetter = (fotb, n) => Of(fotb).current_.JustifySqueezeWord = n
+            },
+            // at a soft hyphen at most so many thousandths of the syllable before it (0: no such bound)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "justify-squeeze-hyphen",
+                integerSetter = (fotb, n) => Of(fotb).current_.JustifySqueezeHyphen = n
             }
         };
     }

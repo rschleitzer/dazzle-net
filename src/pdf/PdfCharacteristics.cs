@@ -109,6 +109,13 @@ public class PdfCharacteristics
     public long TextLineHeight { get; set; } = 0;
     public long TextDescent { get; set; } = 0;
     public long LineHeightFactor { get; set; } = 0;
+    // justify-squeeze: in thousandths of the width of a space, how far a justified line may run past the edge for each of its
+    // spaces, which are then narrowed, as a word processor squeezes justified text; justify-squeeze-word: and at most so many
+    // thousandths of the width of the word that does not fit, with the space before it (0: no such bound); at a soft hyphen
+    // justify-squeeze-hyphen: at most so many thousandths of the syllable before the hyphen (0: no such bound)
+    public long JustifySqueeze { get; set; } = 0;
+    public long JustifySqueezeWord { get; set; } = 0;
+    public long JustifySqueezeHyphen { get; set; } = 0;
     // column-set and balance-columns?: what a display-group sets up its columns with; ColumnSetHere
     // says that the flow object being started specified column-set itself, not inherited it
     public string? ColumnSet { get; set; } = null;
