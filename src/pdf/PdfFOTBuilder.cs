@@ -946,6 +946,23 @@ public class PdfFOTBuilder : FOTBuilder
             {
                 pubid = CharacteristicPrefix + "letter-spacing",
                 lengthSetter = (fotb, n) => Of(fotb).current_.LetterSpacing = n
+            },
+            // the line height and the descent this text needs instead of its font's (0pt: the font's)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "text-line-height",
+                lengthSetter = (fotb, n) => Of(fotb).current_.TextLineHeight = n
+            },
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "text-descent",
+                lengthSetter = (fotb, n) => Of(fotb).current_.TextDescent = n
+            },
+            // in thousandths: every line as high as its own text needs times this, the rest below the placement path (0: off)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "line-height-factor",
+                integerSetter = (fotb, n) => Of(fotb).current_.LineHeightFactor = n
             }
         };
     }

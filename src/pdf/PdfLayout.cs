@@ -906,8 +906,8 @@ internal sealed class PdfLayout
             {
                 if (a.Font == null) continue;
                 text = true;
-                natural = Math.Max(natural, fonts_.LineHeight(a.Font));
-                descent = Math.Max(descent, fonts_.Descent(a.Font) - Pt(a.Chars.PositionPointShift));
+                natural = Math.Max(natural, TextLineHeight(a.Chars, a.Font));
+                descent = Math.Max(descent, TextDescent(a.Chars, a.Font) - Pt(a.Chars.PositionPointShift));
             }
             if (a.Kind == AtomKind.Image && a.Chars.GrowsLine)
             {
@@ -922,8 +922,8 @@ internal sealed class PdfLayout
         if (!text)
         {
             var font = fonts_.Font(p);
-            natural = fonts_.LineHeight(font);
-            descent = fonts_.Descent(font);
+            natural = TextLineHeight(p, font);
+            descent = TextDescent(p, font);
         }
         descent = Math.Max(descent, imageBelow);
         // the line spacing: exactly, or at least with min-leading
@@ -939,7 +939,17 @@ internal sealed class PdfLayout
         // past the end (as word processors do with the extra of a multiple line spacing)
         var below = p.MinPostLineSpacing.HasValue ? Math.Max(descent, Pt(p.MinPostLineSpacing.Value))
             : p.MinPreLineSpacing.HasValue ? Math.Max(descent, height - Pt(p.MinPreLineSpacing.Value)) : descent;
-        MakeRoom(height - (p.MinPostLineSpacing.HasValue ? below - descent : 0), paraKeep_);
+        var past = p.MinPostLineSpacing.HasValue ? below - descent : 0;
+        // line-height-factor: the line as high as its own text needs times the factor, the rest below the placement path, which
+        // may lie past the end of the area like the rest of min-post-line-spacing
+        if (p.LineHeightFactor > 0)
+        {
+            var factor = p.LineHeightFactor / 1000.0;
+            height = Math.Max(natural * factor, image + descent);
+            below = descent + Math.Max(0, height - natural);
+            past = below - descent;
+        }
+        MakeRoom(height - past, paraKeep_);
         var top = area_.Y;
         var baseline = top + height - below;
         var width = LineWidth(from, to, indent);
@@ -964,6 +974,11 @@ internal sealed class PdfLayout
         SetAtoms(from, to, x, baseline, top, extra, fill, area_.X);
         area_.Y = top + height;
     }
+
+    // The line height and the descent of a text: text-line-height and text-descent where they are set, else its font's
+    private double TextLineHeight(PdfCharacteristics c, XFont font) => c.TextLineHeight > 0 ? Pt(c.TextLineHeight) : fonts_.LineHeight(font);
+
+    private double TextDescent(PdfCharacteristics c, XFont font) => c.TextDescent > 0 ? Pt(c.TextDescent) : fonts_.Descent(font);
 
     // Put the atoms from..to side by side with their baseline at `baseline`. Every space gets
     // `extra` more, every leader `fill` more than one pattern.

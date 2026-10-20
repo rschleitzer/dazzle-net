@@ -10,7 +10,7 @@
 
     <!-- NuGet Package -->
     <PackageId>Dazzle.Pdf</PackageId>
-    <Version>0.9.0</Version>
+    <Version>0.10.0</Version>
     <Authors>Ralf Schleitzer</Authors>
     <Description>DSSSL-to-PDF processor using OpenJade: sets the pages itself and writes them with PDFsharp. Includes table support and a clean DssslProcessor API.</Description>
     <PackageTags>dsssl;openjade;pdf;pdfsharp</PackageTags>

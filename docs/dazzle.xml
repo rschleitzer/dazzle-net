@@ -205,6 +205,35 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
       <para>Since Dazzle.Pdf 0.8.0.</para>
     </section>
 
+    <section xml:id="line-metrics">
+      <title>Line heights as a word processor's: <literal>text-line-height</literal>, <literal>text-descent</literal>,
+        <literal>line-height-factor</literal></title>
+      <para>A line is as high as the tallest text in it needs, its placement path above the deepest descent, both from the
+        fonts' metrics. Word processors give some fonts more than their metrics say (Word sets a line with MS Gothic 1.3 em
+        high, of a font 1.0 em high), and measure every line of a paragraph for itself. <literal>text-line-height</literal> and
+        <literal>text-descent</literal> give a text the height of a line and the part of it below the placement path that it
+        needs, instead of its font's; 0pt, the initial value, is the font's. With <literal>line-height-factor</literal> not 0,
+        every line of the paragraph is as high as its own text needs times the factor, in thousandths, and the rest beyond what
+        the text needs lies below the placement path; <literal>line-spacing</literal>, <literal>min-leading</literal>,
+        <literal>min-pre-line-spacing</literal> and <literal>min-post-line-spacing</literal> then do not count. At the end of an
+        area the rest may lie past the end, as with <literal>min-post-line-spacing</literal>.</para>
+      <informaltable>
+        <tgroup cols="3">
+          <thead><row><entry>Characteristic</entry><entry>Value</entry><entry>Meaning</entry></row></thead>
+          <tbody>
+            <row><entry><literal>text-line-height</literal></entry><entry>length, initial <literal>0pt</literal></entry><entry>the line height this text needs</entry></row>
+            <row><entry><literal>text-descent</literal></entry><entry>length, initial <literal>0pt</literal></entry><entry>how far this text needs to reach below the placement path</entry></row>
+            <row><entry><literal>line-height-factor</literal></entry><entry>integer, initial <literal>0</literal></entry><entry>every line its own height times this, in thousandths</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+      <programlisting language="dsssl">(make paragraph line-height-factor: 1150
+  (make sequence font-family-name: "MS Gothic" text-line-height: 14.3pt text-descent: 3.17pt
+    (literal "X"))
+  (literal " a line in Arial Narrow"))</programlisting>
+      <para>Since Dazzle.Pdf 0.10.0.</para>
+    </section>
+
     <section xml:id="locations">
       <title>Where elements begin</title>
       <para>Not a part of the language but of the program interface of Dazzle.Pdf:

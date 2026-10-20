@@ -103,6 +103,12 @@ public class PdfCharacteristics
     // letter-spacing: space added after every character of the text, also after the last and after a space (negative narrows),
     // as a word processor's character spacing
     public long LetterSpacing { get; set; } = 0;
+    // text-line-height and text-descent: the height of a line and the part of it below the placement path that this text needs,
+    // instead of what its font's metrics say (0: the font's), as word processors give some fonts; line-height-factor: in
+    // thousandths, not 0: every line of the paragraph is as high as its own text needs times this, the rest below the placement path
+    public long TextLineHeight { get; set; } = 0;
+    public long TextDescent { get; set; } = 0;
+    public long LineHeightFactor { get; set; } = 0;
     // column-set and balance-columns?: what a display-group sets up its columns with; ColumnSetHere
     // says that the flow object being started specified column-set itself, not inherited it
     public string? ColumnSet { get; set; } = null;
