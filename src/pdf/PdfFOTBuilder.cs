@@ -374,27 +374,29 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void endLeader() => Close();
 
-    // Score: the line goes with the text under the characteristics of the score
+    // Score: the line goes with the text under the characteristics of the score. They are set
+    // before start(), so that the score's entry on the stack has them: after a flow object
+    // inside the score ends, the characteristics come back from that entry.
     public override void startScore(Symbol type)
     {
-        start();
         current_.ScoreType = type;
         current_.ScoreLength = null;
+        start();
     }
 
     public override void startScore(LengthSpec length)
     {
-        start();
         current_.ScoreType = Symbol.symbolFalse;
         current_.ScoreLength = length.length;
+        start();
     }
 
     public override void startScore(Char c)
     {
         // A character score is set as an underline
-        start();
         current_.ScoreType = Symbol.symbolAfter;
         current_.ScoreLength = null;
+        start();
     }
 
     public override void setScoreSpaces(bool score) => current_.ScoreSpaces = score;
