@@ -497,6 +497,14 @@ public class PdfFOTBuilder : FOTBuilder
         borderCharacteristicsFresh_ = true;
     }
 
+    // line-dash: the first length of the list is the offset, the others alternately dash and gap; without them a line is solid
+    public override void setLineDash(System.Collections.Generic.List<long> dashes, long offset)
+    {
+        current_.LineDash = dashes.Count == 0 ? null : dashes.ToArray();
+        current_.LineDashOffset = offset;
+        borderCharacteristicsFresh_ = true;
+    }
+
     public override void setBorderPresent(bool present)
     {
         borderPresent_ = present;
@@ -675,6 +683,7 @@ public class PdfFOTBuilder : FOTBuilder
         public override void setFieldAlign(Symbol a) => parent_.setFieldAlign(a);
         public override void setPositionPointShift(LengthSpec s) => parent_.setPositionPointShift(s);
         public override void setLineThickness(long t) => parent_.setLineThickness(t);
+        public override void setLineDash(System.Collections.Generic.List<long> dashes, long offset) => parent_.setLineDash(dashes, offset);
         public override void setBorderPresent(bool b) => parent_.setBorderPresent(b);
         public override void setCellBeforeRowMargin(LengthSpec m) => parent_.setCellBeforeRowMargin(m);
         public override void setCellAfterRowMargin(LengthSpec m) => parent_.setCellAfterRowMargin(m);
@@ -801,6 +810,8 @@ public class PdfFOTBuilder : FOTBuilder
         return new PdfBorder
         {
             LineThickness = lineThickness_,
+            LineDash = current_.LineDash,
+            LineDashOffset = current_.LineDashOffset,
             ColorR = current_.ColorR,
             ColorG = current_.ColorG,
             ColorB = current_.ColorB

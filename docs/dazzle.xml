@@ -261,7 +261,7 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
           <literal>keep</literal>, <literal>keep-with-previous?</literal> (only <literal>keep-with-next?</literal>
           holds a block to the next), <literal>may-violate-keep-before?</literal>,
           <literal>may-violate-keep-after?</literal>, <literal>last-line-quadding</literal>,
-          <literal>line-dash</literal>, <literal>line-cap</literal>, <literal>line-join</literal>,
+          <literal>line-cap</literal>, <literal>line-join</literal>,
           <literal>box-type</literal>, <literal>box-corner-radius</literal>, <literal>kern?</literal>,
           <literal>ligature?</literal>, <literal>language</literal> and <literal>country</literal>.</para></listitem>
       </itemizedlist>
@@ -323,6 +323,21 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
         <listitem><para>Under <literal>'preserve</literal>, where <literal>lines: 'wrap</literal> wraps a line it still
           breaks at the kept spaces.</para></listitem>
       </itemizedlist>
+    </section>
+
+    <section xml:id="line-dash">
+      <title>Dashed lines: <literal>line-dash</literal></title>
+      <para>A <literal>rule</literal>, a border of a table or of a table cell and a <literal>score</literal> are drawn
+        with the <literal>line-dash</literal> in effect where they are made. As the standard has it, the first length
+        of the list is the number component of the <literal>CurrentDashPattern</literal> of ISO/IEC 10180, the offset
+        into the pattern at which the line starts, and the others are its vector component, alternately the lengths of
+        dashes and gaps, as the arguments of PostScript's <literal>setdash</literal>; the initial value
+        <literal>(0pt)</literal> is a solid line. A pattern of odd length repeats with dashes and gaps alternating, as
+        in PostScript.</para>
+      <programlisting language="dsssl">(make rule orientation: 'horizontal line-thickness: 1pt
+  line-dash: (list 0pt 4pt 1pt))</programlisting>
+      <para>Since Dazzle.Pdf 0.9.0, with OpenJade 1.5.0, which passes the characteristic to the backend; the original
+        installs it and ignores it.</para>
     </section>
 
     <section xml:id="display-space">

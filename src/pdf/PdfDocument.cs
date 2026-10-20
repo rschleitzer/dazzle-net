@@ -207,6 +207,8 @@ public class PdfExternalGraphic : PdfNode
 public class PdfBorder
 {
     public long LineThickness { get; set; } = 1000;
+    public long[]? LineDash { get; set; }
+    public long LineDashOffset { get; set; }
     public byte ColorR { get; set; }
     public byte ColorG { get; set; }
     public byte ColorB { get; set; }

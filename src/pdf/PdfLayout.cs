@@ -43,6 +43,8 @@ internal sealed class PdfLayout
         public XFont? Font;
         public string? Path;
         public double Spacing;              // letter-spacing of a text: after every character
+        public double[]? Dash;              // line-dash of a line: dashes and gaps in points, null solid
+        public double DashOffset;
         public bool Background;             // the background of a table cell
 
         public void Shift(double dx, double dy)
@@ -601,7 +603,8 @@ internal sealed class PdfLayout
         var length = n.HasLength ? Pt(n.Length) : available;
         var x = area_.X + Pt(c.StartIndent) + Offset(c.DisplayAlignment, available - length);
         var at = area_.Y + thickness / 2;
-        area_.Ops.Add(new Op { Kind = OpKind.Line, X = x, Y = at, X2 = x + length, Y2 = at, Thickness = thickness, Color = ColorOf(c) });
+        area_.Ops.Add(new Op { Kind = OpKind.Line, X = x, Y = at, X2 = x + length, Y2 = at, Thickness = thickness, Color = ColorOf(c),
+            Dash = Dash(c.LineDash), DashOffset = Pt(c.LineDashOffset) });
         area_.Y += thickness;
     }
 
@@ -1067,7 +1070,11 @@ internal sealed class PdfLayout
 
     private static bool SameScore(PdfCharacteristics a, PdfCharacteristics b) =>
         a.ScoreType == b.ScoreType && a.ScoreLength == b.ScoreLength
-        && a.ColorR == b.ColorR && a.ColorG == b.ColorG && a.ColorB == b.ColorB;
+        && a.ColorR == b.ColorR && a.ColorG == b.ColorG && a.ColorB == b.ColorB
+        && (a.LineDash ?? []).SequenceEqual(b.LineDash ?? []) && a.LineDashOffset == b.LineDashOffset;
+
+    // line-dash in points; null for a solid line
+    private static double[]? Dash(long[]? dash) => dash == null ? null : Array.ConvertAll(dash, d => Pt(d));
 
     // A score: 'after under the text, 'through through it, 'before over it, a length below the
     // placement path by that much
@@ -1078,7 +1085,8 @@ internal sealed class PdfLayout
             : c.ScoreType == Symbol.symbolThrough ? baseline - strike
             : c.ScoreType == Symbol.symbolBefore ? baseline - over
             : baseline + underline;
-        area_.Ops.Add(new Op { Kind = OpKind.Line, X = x1, Y = y, X2 = x2, Y2 = y, Thickness = thickness, Color = ColorOf(c) });
+        area_.Ops.Add(new Op { Kind = OpKind.Line, X = x1, Y = y, X2 = x2, Y2 = y, Thickness = thickness, Color = ColorOf(c),
+            Dash = Dash(c.LineDash), DashOffset = Pt(c.LineDashOffset) });
     }
 
     private static XColor ColorOf(PdfCharacteristics c) => XColor.FromArgb(c.ColorR, c.ColorG, c.ColorB);
@@ -1355,7 +1363,8 @@ internal sealed class PdfLayout
     private static Op BorderLine(double x1, double y1, double x2, double y2, PdfBorder border) => new()
     {
         Kind = OpKind.Line, X = x1, Y = y1, X2 = x2, Y2 = y2, Thickness = border.LineThicknessPt,
-        Color = XColor.FromArgb(border.ColorR, border.ColorG, border.ColorB)
+        Color = XColor.FromArgb(border.ColorR, border.ColorG, border.ColorB),
+        Dash = Dash(border.LineDash), DashOffset = Pt(border.LineDashOffset)
     };
 
     // ==================== Page numbers ====================

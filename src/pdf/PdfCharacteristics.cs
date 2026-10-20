@@ -97,6 +97,9 @@ public class PdfCharacteristics
     // grows-line?: whether an inline graphic makes its line taller where it does not fit (#f: it reaches beyond, as a word
     // processor's form field box does)
     public bool GrowsLine { get; set; } = true;
+    // line-dash: the lengths of dashes and gaps, alternately, and the offset into them where a line starts; null is solid
+    public long[]? LineDash { get; set; } = null;
+    public long LineDashOffset { get; set; } = 0;
     // letter-spacing: space added after every character of the text, also after the last and after a space (negative narrows),
     // as a word processor's character spacing
     public long LetterSpacing { get; set; } = 0;

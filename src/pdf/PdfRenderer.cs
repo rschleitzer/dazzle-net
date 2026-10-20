@@ -124,7 +124,7 @@ public class PdfRenderer
                             break;
                         case PdfLayout.OpKind.Line:
                             if (op.Thickness > 0)
-                                gfx.DrawLine(new XPen(op.Color, op.Thickness), op.X, op.Y, op.X2, op.Y2);
+                                gfx.DrawLine(Pen(op), op.X, op.Y, op.X2, op.Y2);
                             break;
                         case PdfLayout.OpKind.Rect:
                             gfx.DrawRectangle(new XSolidBrush(op.Color), op.X, op.Y, op.W, op.H);
@@ -152,6 +152,21 @@ public class PdfRenderer
 
     // A page label where the format of the page numbers changes, so that a viewer shows the
     // numbers as the pages do
+    // The pen of a line. line-dash goes to PDFsharp relative to the width of the pen; a pattern of odd length is taken twice, so
+    // that it repeats with dashes and gaps alternating as in PostScript, where PDFsharp would add a gap of its own.
+    private static XPen Pen(PdfLayout.Op op)
+    {
+        var pen = new XPen(op.Color, op.Thickness);
+        if (op.Dash is { Length: > 0 } dash && dash.Any(d => d > 0))
+        {
+            var pattern = dash.Length % 2 == 1 ? [.. dash, .. dash] : dash;
+            pen.DashStyle = XDashStyle.Custom;
+            pen.DashPattern = Array.ConvertAll(pattern, d => d / op.Thickness);
+            pen.DashOffset = op.DashOffset / op.Thickness;
+        }
+        return pen;
+    }
+
     private static void PageLabels(PdfDocument doc, List<PdfLayout.Page> pages)
     {
         if (pages.Count == 0 || pages.All(p => p.NumberFormat == "1")) return;
