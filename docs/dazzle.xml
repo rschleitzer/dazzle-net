@@ -263,6 +263,36 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
       <para>Since Dazzle.Pdf 0.11.0.</para>
     </section>
 
+    <section xml:id="hyphenation">
+      <title>When a line breaks at a soft hyphen: <literal>hyphenation-ladder-count</literal>, <literal>hyphenation-zone</literal>,
+        <literal>hyphenation-stretch</literal>, <literal>hyphenation-next-char?</literal></title>
+      <para>Dazzle.Pdf does not hyphenate by itself: a stylesheet puts soft hyphens (U+00AD) into the text where a word may break, and
+        a line breaks at the last of them that fits. Word processors are choosier, and these characteristics say when a soft hyphen
+        that fits is taken. <literal>hyphenation-ladder-count</literal> is the one of ISO/IEC 10179: at most so many lines in a row
+        end at a hyphen (<literal>#f</literal>, the initial value: any number). The others are extensions:</para>
+      <informaltable>
+        <tgroup cols="3">
+          <thead><row><entry>Characteristic</entry><entry>Value</entry><entry>A soft hyphen is taken only where</entry></row></thead>
+          <tbody>
+            <row><entry><literal>hyphenation-zone</literal></entry><entry>length, initial <literal>0pt</literal></entry><entry>more room than this is left on the line before the word, from its start</entry></row>
+            <row><entry><literal>hyphenation-zone-space?</literal></entry><entry>boolean, initial <literal>#f</literal></entry><entry>that room is taken from the end of the word before, the space with it</entry></row>
+            <row><entry><literal>hyphenation-zone-indent?</literal></entry><entry>boolean, initial <literal>#f</literal></entry><entry>the start indent of the line counts to that room</entry></row>
+            <row><entry><literal>hyphenation-stretch</literal></entry><entry>integer, initial <literal>0</literal></entry><entry>in a justified line instead of the zone: the line without the word would widen each of its spaces by more than so many thousandths of a space</entry></row>
+            <row><entry><literal>hyphenation-next-char?</literal></entry><entry>boolean, initial <literal>#f</literal></entry><entry>the character after the hyphen would fit on the line as well</entry></row>
+          </tbody>
+        </tgroup>
+      </informaltable>
+      <para>Word in its compatibility mode 14 takes a soft hyphen where more room than its hyphenation zone is left before the word,
+        the indent of the line counted to it, and where the next character fits too; in mode 15 it ignores the zone of the document:
+        in a ragged line it wants more than 18.26 points after the word before, in a justified line spaces widened by more than 0.49
+        of their width. Both limit the lines in a row that end at a hyphen.</para>
+      <programlisting language="dsssl">(make paragraph quadding: 'start hyphenation-ladder-count: 3
+  hyphenation-zone: 21.25pt hyphenation-zone-indent?: #t hyphenation-next-char?: #t
+  (process-children))</programlisting>
+      <para>Since Dazzle.Pdf 0.12.0; the bound of <literal>justify-squeeze-hyphen</literal> holds from the second syllable of a word
+        on, the first is only bound by the spaces.</para>
+    </section>
+
     <section xml:id="locations">
       <title>Where elements begin</title>
       <para>Not a part of the language but of the program interface of Dazzle.Pdf:

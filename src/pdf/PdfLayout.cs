@@ -823,6 +823,7 @@ internal sealed class PdfLayout
         bool wraps = p.Wraps;
         int from = b;
         bool wrapped = false;
+        int hyphenLines = 0;          // lines in a row ending at a soft hyphen, for hyphenation-ladder-count
         while (from < end)
         {
             var indent = Pt(p.StartIndent) + (paraFirst_ ? Pt(p.FirstLineStartIndent) : 0);
@@ -870,7 +871,8 @@ internal sealed class PdfLayout
                     breakAt = spaceAt = to;
                     breakNext = to + 1;
                 }
-                else if (a.Kind == AtomKind.SoftHyphen && LineWidth(from, to + 1, indent) <= available + HyphenSqueeze(p, from, to, breakAt) + 0.001)
+                else if (a.Kind == AtomKind.SoftHyphen && LineWidth(from, to + 1, indent) <= available + HyphenSqueeze(p, from, to, breakAt) + 0.001
+                         && HyphenBreaks(p, from, to, spaceAt, indent, available, hyphenLines))
                 {
                     breakAt = to + 1;     // the hyphen stays on the line
                     breakNext = to + 1;
@@ -881,6 +883,7 @@ internal sealed class PdfLayout
             if (next < 0) next = to;
             bool last = to >= end || ended;
             wrapped = !ended && to < end;
+            hyphenLines = !last && to > from && atoms_[to - 1].Kind == AtomKind.SoftHyphen ? hyphenLines + 1 : 0;
             SetLine(p, from, to, indent, available, last);
             paraFirst_ = false;
             from = next;
@@ -1003,9 +1006,37 @@ internal sealed class PdfLayout
             if (atoms_[i].Kind == AtomKind.Space && atoms_[i].Stretches)
                 sum += atoms_[i].Width;
         var squeeze = sum * p.JustifySqueeze / 1000.0;
-        if (p.JustifySqueezeHyphen > 0)
-            squeeze = Math.Min(squeeze, LineWidth(breakAt > from ? breakAt : from, to) * p.JustifySqueezeHyphen / 1000.0);
+        // the bound from the syllable before the hyphen holds from the second syllable on; the first is only bound by the spaces
+        if (p.JustifySqueezeHyphen > 0 && breakAt > from && atoms_[breakAt - 1].Kind == AtomKind.SoftHyphen)
+            squeeze = Math.Min(squeeze, LineWidth(breakAt, to) * p.JustifySqueezeHyphen / 1000.0);
         return squeeze;
+    }
+
+    // Whether the line may break at the soft hyphen at to, the word beginning after the space at spaceAt (or at the line's start)
+    private bool HyphenBreaks(PdfCharacteristics p, int from, int to, int spaceAt, double indent, double available, int hyphenLines)
+    {
+        // hyphenation-ladder-count: no more lines in a row at a hyphen
+        if (p.HyphenationLadderCount > 0 && hyphenLines >= p.HyphenationLadderCount) return false;
+        // hyphenation-next-char?: the character after the hyphen fits on the line as well
+        if (p.HyphenationNextChar && to + 1 < atoms_.Count && atoms_[to + 1] is { Kind: AtomKind.Text, Text.Length: > 0 } after
+            && LineWidth(from, to, indent) + fonts_.Width(after.Text![..1], after.Font!) + Pt(after.Chars.LetterSpacing) > available + 0.001)
+            return false;
+        if (spaceAt <= from) return true;
+        if (p.Quadding == Symbol.symbolJustify && p.HyphenationStretch > 0)
+        {
+            // hyphenation-stretch: the line without the word, justified, widens each space by more than the share of a space
+            int spaces = 0;
+            for (int i = from + 1; i < spaceAt; i++)
+                if (atoms_[i].Kind == AtomKind.Space && atoms_[i].Stretches) spaces++;
+            var room = available - LineWidth(from, spaceAt, indent);
+            return spaces == 0 || room / spaces > atoms_[spaceAt].Width * p.HyphenationStretch / 1000.0;
+        }
+        // hyphenation-zone: more room than that left before the word, from its start or the end of the word before, with
+        // hyphenation-zone-indent? and the start indent of the line
+        if (p.HyphenationZone > 0)
+            return available - LineWidth(from, p.HyphenationZoneSpace ? spaceAt : spaceAt + 1, indent)
+                   + (p.HyphenationZoneIndent ? indent : 0) > Pt(p.HyphenationZone) + 0.001;
+        return true;
     }
 
     // The line height and the descent of a text: text-line-height and text-descent where they are set, else its font's

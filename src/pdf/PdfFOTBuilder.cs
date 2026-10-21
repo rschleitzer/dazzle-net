@@ -400,6 +400,8 @@ public class PdfFOTBuilder : FOTBuilder
     }
 
     public override void setScoreSpaces(bool score) => current_.ScoreSpaces = score;
+    public override void setHyphenationLadderCount(long count) => current_.HyphenationLadderCount = count;
+    public override void setHyphenationLadderCount(Symbol count) => current_.HyphenationLadderCount = 0;
 
     // ==================== Node tracking & cross-references ====================
 
@@ -698,6 +700,8 @@ public class PdfFOTBuilder : FOTBuilder
         public override void setLines(Symbol l) => parent_.setLines(l);
         public override void setInputWhitespaceTreatment(Symbol t) => parent_.setInputWhitespaceTreatment(t);
         public override void setScoreSpaces(bool b) => parent_.setScoreSpaces(b);
+        public override void setHyphenationLadderCount(long n) => parent_.setHyphenationLadderCount(n);
+        public override void setHyphenationLadderCount(Symbol n) => parent_.setHyphenationLadderCount(n);
 
         // Extension characteristics: the setters resolve the proxy to its parent
         public override void extensionSet(Action<FOTBuilder, bool> func, bool arg) => func(parent_, arg);
@@ -981,6 +985,36 @@ public class PdfFOTBuilder : FOTBuilder
             {
                 pubid = CharacteristicPrefix + "justify-squeeze-hyphen",
                 integerSetter = (fotb, n) => Of(fotb).current_.JustifySqueezeHyphen = n
+            },
+            // a break at a soft hyphen only where more room than this is left before the word (0pt: anywhere)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "hyphenation-zone",
+                lengthSetter = (fotb, n) => Of(fotb).current_.HyphenationZone = n
+            },
+            // the room of hyphenation-zone from the end of the word before, the space with it
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "hyphenation-zone-space?",
+                boolSetter = (fotb, v) => Of(fotb).current_.HyphenationZoneSpace = v
+            },
+            // the start indent of the line counts to the room of hyphenation-zone
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "hyphenation-zone-indent?",
+                boolSetter = (fotb, v) => Of(fotb).current_.HyphenationZoneIndent = v
+            },
+            // in a justified line instead: only where each space would widen by more than so many thousandths of a space (0: off)
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "hyphenation-stretch",
+                integerSetter = (fotb, n) => Of(fotb).current_.HyphenationStretch = n
+            },
+            // only where the character after the hyphen fits as well
+            new FOTBuilder.ExtensionTableEntry
+            {
+                pubid = CharacteristicPrefix + "hyphenation-next-char?",
+                boolSetter = (fotb, v) => Of(fotb).current_.HyphenationNextChar = v
             }
         };
     }

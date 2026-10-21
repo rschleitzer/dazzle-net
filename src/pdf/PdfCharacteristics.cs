@@ -116,6 +116,18 @@ public class PdfCharacteristics
     public long JustifySqueeze { get; set; } = 0;
     public long JustifySqueezeWord { get; set; } = 0;
     public long JustifySqueezeHyphen { get; set; } = 0;
+    // hyphenation-ladder-count: at most so many lines in a row end at a soft hyphen (0, #f: any number)
+    public long HyphenationLadderCount { get; set; } = 0;
+    // hyphenation-zone: a line breaks at a soft hyphen only where more room than this is left before the word, from its start or,
+    // with hyphenation-zone-space?, from the end of the word before it, and with hyphenation-zone-indent? the start indent of the
+    // line added to it (as Word 2010 counts); hyphenation-stretch instead in a justified line: only where
+    // the line without the word would widen each of its spaces by more than so many thousandths of a space; hyphenation-next-char?:
+    // only where the character after the hyphen fits as well
+    public long HyphenationZone { get; set; } = 0;
+    public bool HyphenationZoneSpace { get; set; } = false;
+    public bool HyphenationZoneIndent { get; set; } = false;
+    public long HyphenationStretch { get; set; } = 0;
+    public bool HyphenationNextChar { get; set; } = false;
     // column-set and balance-columns?: what a display-group sets up its columns with; ColumnSetHere
     // says that the flow object being started specified column-set itself, not inherited it
     public string? ColumnSet { get; set; } = null;
