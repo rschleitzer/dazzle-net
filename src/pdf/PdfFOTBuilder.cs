@@ -28,6 +28,8 @@ public class PdfFOTBuilder : FOTBuilder
     // unless it goes into a container opened in the header or footer itself
     private uint? hfSlot_;
     private int hfDepth_;
+    // the header or footer of a page model being read, where its nodes go
+    private System.Collections.Generic.List<PdfNode>? modelPart_;
 
     public PdfFOTBuilder(CmdLineApp app, string outputFilename)
     {
@@ -51,6 +53,8 @@ public class PdfFOTBuilder : FOTBuilder
             errors_.Add($"span {current_.Span} in a column-set-sequence: an area spans one column only");
         if (hfSlot_.HasValue && pageSequence_ != null && containerStack_.Count <= hfDepth_)
             pageSequence_.HeaderFooter[hfSlot_.Value].Add(node);
+        else if (modelPart_ != null && containerStack_.Count <= hfDepth_)
+            modelPart_.Add(node);
         else if (containerStack_.Count > 0)
             containerStack_.Peek().Add(node);
         else
@@ -130,6 +134,22 @@ public class PdfFOTBuilder : FOTBuilder
     }
 
     public override void endPageSequence() => endSimplePageSequence();
+
+    // The header or the footer of the region of a page model: its nodes, set on every page of the model
+    public override void startPageModelHeaderFooter(PageModel model, bool footer)
+    {
+        modelPart_ = new System.Collections.Generic.List<PdfNode>();
+        if (pageSequence_ != null)
+            (footer ? pageSequence_.ModelFooters : pageSequence_.ModelHeaders)[model] = modelPart_;
+        hfDepth_ = containerStack_.Count;
+        characteristicsStack_.Push(current_.Clone());
+    }
+
+    public override void endPageModelHeaderFooter(PageModel model, bool footer)
+    {
+        modelPart_ = null;
+        end();
+    }
 
     public override void setInitialPageModels(PageModel[] models) => current_.InitialPageModels = models;
     public override void setRepeatPageModels(PageModel[] models) => current_.RepeatPageModels = models;

@@ -220,7 +220,7 @@ internal sealed class PdfLayout
     {
         get
         {
-            if (Model is { } m) return Pt(m.height - m.regionYOrigin - m.regionHeight);
+            if (Model is { } m) return Pt(m.height - m.regionYOrigin - m.regionHeight) + ModelPartHeight(m, false);
             var c = seq_!.Characteristics;
             return Pt(seqFirst_ && c.FirstPageTopMargin > 0 ? c.FirstPageTopMargin : c.TopMargin);
         }
@@ -230,7 +230,7 @@ internal sealed class PdfLayout
     {
         get
         {
-            if (Model is { } m) return Pt(m.height - m.regionYOrigin);
+            if (Model is { } m) return Pt(m.height - m.regionYOrigin) - ModelPartHeight(m, true);
             var c = seq_!.Characteristics;
             return Pt(c.PageHeight - (seqFirst_ && c.FirstPageBottomMargin > 0 ? c.FirstPageBottomMargin : c.BottomMargin));
         }
@@ -1181,6 +1181,8 @@ internal sealed class PdfLayout
 
     private IEnumerable<Op> HeadersAndFooters(Page page)
     {
+        if (Model is { } model)
+            return ModelHeadersAndFooters(model, page);
         var seq = seq_!;
         var c = seq.Characteristics;
         int flags = (page.FirstOfSequence ? (int)HF.firstHF : (int)HF.otherHF)
@@ -1207,6 +1209,40 @@ internal sealed class PdfLayout
                 }
             }
         return result;
+    }
+
+    // The header and the footer of the region of a page model: the header from the top of the region,
+    // the footer in the area at its bottom, as high as its height or, without one, as what it generates
+    private List<Op> ModelHeadersAndFooters(PageModel m, Page page)
+    {
+        var seq = seq_!;
+        var result = new List<Op>();
+        double x = Pt(m.regionXOrigin), width = Pt(m.regionWidth);
+        foreach (bool footer in new[] { false, true })
+        {
+            if (!(footer ? seq.ModelFooters : seq.ModelHeaders).TryGetValue(m, out var nodes)) continue;
+            var (ops, height) = SetPart(nodes, x, width, Symbol.symbolStart, page.Number);
+            double dy = footer
+                ? Pt(m.height - m.regionYOrigin) - (m.hasFooterHeight ? Pt(m.footerHeight) : height)
+                : Pt(m.height - m.regionYOrigin - m.regionHeight);
+            foreach (var op in ops)
+            {
+                if (op.Kind == OpKind.Mark) continue;
+                op.Shift(0, dy);
+                result.Add(op);
+            }
+        }
+        return result;
+    }
+
+    // How much of the region of a page model its header (or footer) takes: its height, or without
+    // one the height of what it generates
+    private double ModelPartHeight(PageModel m, bool footer)
+    {
+        if (footer ? m.hasFooterHeight : m.hasHeaderHeight)
+            return Pt(footer ? m.footerHeight : m.headerHeight);
+        if (!(footer ? seq_!.ModelFooters : seq_!.ModelHeaders).TryGetValue(m, out var nodes)) return 0;
+        return SetPart(nodes, Pt(m.regionXOrigin), Pt(m.regionWidth), Symbol.symbolStart, pageNo_).Height;
     }
 
     private (List<Op> Ops, double Height) SetPart(List<PdfNode> nodes, double x, double width, Symbol align, int page)

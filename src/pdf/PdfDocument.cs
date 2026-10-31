@@ -58,6 +58,10 @@ public class PdfPageSequence : PdfContainerNode
     public PageModel[]? InitialPageModels;
     public PageModel[]? RepeatPageModels;
 
+    // What the header and the footer of the region of a page model generate, by model
+    public Dictionary<PageModel, List<PdfNode>> ModelHeaders { get; } = new();
+    public Dictionary<PageModel, List<PdfNode>> ModelFooters { get; } = new();
+
     public PdfPageSequence(PdfCharacteristics characteristics, int headerFooterSlots)
         : base(characteristics)
     {

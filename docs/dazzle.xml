@@ -526,7 +526,14 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
             <row><entry><literal>x-origin</literal>, <literal>y-origin</literal>, <literal>width</literal>, <literal>height</literal> of the region</entry>
               <entry>required; the origin is at the lower left and y goes up (12.3.1), so <literal>y-origin</literal> is the bottom margin</entry></row>
             <row><entry><literal>flow</literal> of the region</entry><entry>absent or <literal>(flow #f)</literal>: the principal port</entry></row>
-            <row><entry><literal>header</literal>, <literal>footer</literal>, <literal>decorate</literal>, further regions</entry><entry>an error</entry></row>
+            <row><entry><literal>header</literal>, <literal>footer</literal> of the region</entry>
+              <entry>at most one each (since 0.13.0, on OpenJade 1.6.0): <literal>generate</literal> required, a sosofo of
+              display flow objects, set on every page of the model across the width of the region – the header from
+              the top of the region, the footer in the area at its bottom; <literal>height</literal> the room each
+              takes from the flow, without it the height of what it generates; <literal>filling-direction</literal>
+              <literal>'top-to-bottom</literal> only; <literal>width</literal> and <literal>contents-alignment</literal>
+              an error. A page with a header on one side and none on the other is two page models.</entry></row>
+            <row><entry><literal>decorate</literal>, further regions</entry><entry>an error</entry></row>
           </tbody>
         </tgroup>
       </informaltable>
