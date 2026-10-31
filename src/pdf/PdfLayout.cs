@@ -32,7 +32,7 @@ internal sealed class PdfLayout
         public List<Op> Ops = new();
     }
 
-    public enum OpKind { Text, Line, Rect, Image, Mark }
+    public enum OpKind { Text, Line, Rect, Image, Mark, Link }
 
     public sealed class Op
     {
@@ -982,6 +982,7 @@ internal sealed class PdfLayout
             area_.Ops.Add(new Op { Kind = OpKind.Rect, X = area_.X + Pt(p.StartIndent), Y = top,
                 W = area_.Width - Pt(p.StartIndent) - Pt(p.EndIndent), H = height,
                 Color = XColor.FromArgb(p.BackgroundR, p.BackgroundG, p.BackgroundB) });
+        lineBottom_ = top + height;
         SetAtoms(from, to, x, baseline, top, extra, fill, area_.X);
         area_.Y = top + height;
     }
@@ -1052,9 +1053,22 @@ internal sealed class PdfLayout
 
     // Put the atoms from..to side by side with their baseline at `baseline`. Every space gets
     // `extra` more, every leader `fill` more than one pattern.
+    // the bottom of the line being set, for the rectangles of its links
+    private double lineBottom_;
+
     private void SetAtoms(int from, int to, double start, double baseline, double top, double extra, double fill, double lineStart)
     {
         double x = start, fieldX = 0, fieldWidth = 0;
+        // the link being marked: where its rectangle begins and where its last text ends
+        PdfLink? link = null;
+        double linkFrom = 0, linkTo = 0;
+        void EndLink()
+        {
+            if (link != null && linkTo > linkFrom)
+                area_.Ops.Add(new Op { Kind = OpKind.Link, X = linkFrom, Y = top, W = linkTo - linkFrom, H = lineBottom_ - top,
+                    Text = link.Uri });
+            link = null;
+        }
         // the score being drawn: where it begins, where its last scored text ends
         PdfCharacteristics? score = null;
         XFont? scoreFont = null;
@@ -1068,6 +1082,14 @@ internal sealed class PdfLayout
         for (int i = from; i < to; i++)
         {
             var a = atoms_[i];
+            // what is drawn is in the link of its characteristics or in none
+            bool linkable = a.Kind is AtomKind.Text or AtomKind.Space or AtomKind.Image or AtomKind.Leader or AtomKind.FieldStart;
+            if (linkable && a.Chars.Link != link)
+            {
+                EndLink();
+                link = a.Chars.Link;
+                linkFrom = linkTo = x;
+            }
             switch (a.Kind)
             {
                 case AtomKind.Text:
@@ -1149,8 +1171,11 @@ internal sealed class PdfLayout
                     if (x < fieldX + fieldWidth) x = fieldX + fieldWidth;
                     break;
             }
+            if (link != null && linkable && a.Chars.Link == link)
+                linkTo = x;
         }
         EndScore();
+        EndLink();
     }
 
     private static bool SameScore(PdfCharacteristics a, PdfCharacteristics b) =>

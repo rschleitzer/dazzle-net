@@ -328,6 +328,12 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
         <listitem><para><literal>table</literal>, <literal>table-part</literal>, <literal>table-column</literal>,
           <literal>table-row</literal>, <literal>table-cell</literal> and <literal>table-border</literal>: columns and
           rows spanned, borders of the table and of its cells, header rows again on every page, tables in cells;</para></listitem>
+        <listitem><para><literal>link</literal> to another document (since 0.14.0, on OpenJade 1.6.1):
+          <literal>(sgml-document-address "https://scaly.io/" "")</literal> as its <literal>destination</literal>, the
+          system identifier the URI it opens. Its text becomes a rectangle on each line it is set on, as high as the
+          line, and each rectangle a link annotation of the page; it draws nothing, so the stylesheet says how a link
+          looks (a <literal>score</literal>, a color). A <literal>link</literal> to another kind of address shows its
+          content only;</para></listitem>
         <listitem><para>the page number of the current page and of the current node.</para></listitem>
       </itemizedlist>
     </section>
@@ -338,7 +344,8 @@ PdfResult result = DssslProcessor.GeneratePdfWithLocations("document.xml", "styl
         passes it over, without a message.</para>
       <itemizedlist>
         <listitem><para>A flow object of a class it does not set shows its content as a <literal>sequence</literal>
-          would, in the place where it stands: <literal>link</literal> (no link in the PDF), <literal>marginalia</literal>
+          would, in the place where it stands: <literal>link</literal> to anything but another document (no link in the
+          PDF), <literal>marginalia</literal>
           and <literal>sideline</literal> (in the text, not beside it), <literal>multi-mode</literal>, the math classes
           and <literal>grid</literal>.</para></listitem>
         <listitem><para><literal>alignment-point</literal>, <literal>formatting-instruction</literal> and the flow

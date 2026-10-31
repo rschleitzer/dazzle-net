@@ -71,6 +71,13 @@ public class PdfPageSequence : PdfContainerNode
     }
 }
 
+// A link flow object to another document: the URI it opens. One object per link, so that two links side
+// by side are two rectangles even where they open the same URI
+public sealed class PdfLink
+{
+    public string Uri = "";
+}
+
 // Block-level paragraph containing inline runs
 public class PdfParagraph : PdfContainerNode
 {

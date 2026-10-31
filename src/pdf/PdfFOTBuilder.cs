@@ -394,6 +394,17 @@ public class PdfFOTBuilder : FOTBuilder
 
     public override void endLeader() => Close();
 
+    // A link: to another document (sgml-document-address), whose system identifier is the URI it opens; the
+    // text in it becomes a rectangle on each line that opens the URI. A link to another kind of address is set
+    // as its content only. Set before start(), as the characteristics of a score.
+    public override void startLink(FOTBuilder.Address addr)
+    {
+        current_.Link = addr.type == FOTBuilder.Address.Type.sgmlDocument && addr.@params[0].size() > 0
+            ? new PdfLink { Uri = addr.@params[0].ToString() }
+            : null;
+        start();
+    }
+
     // Score: the line goes with the text under the characteristics of the score. They are set
     // before start(), so that the score's entry on the stack has them: after a flow object
     // inside the score ends, the characteristics come back from that entry.

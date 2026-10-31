@@ -137,6 +137,14 @@ public class PdfRenderer
                             }
                             gfx.DrawImage(image, op.X, op.Y, op.W, op.H);
                             break;
+                        case PdfLayout.OpKind.Link:
+                        {
+                            // an annotation that opens the URI, without a border (its rectangle with the origin at
+                            // the lower left)
+                            var annotation = page.AddWebLink(new PdfRectangle(new XRect(op.X, p.Height - op.Y - op.H, op.W, op.H)), op.Text!);
+                            annotation.Elements["/Border"] = new PdfArray(doc, new PdfInteger(0), new PdfInteger(0), new PdfInteger(0));
+                            break;
+                        }
                     }
                 }
             }

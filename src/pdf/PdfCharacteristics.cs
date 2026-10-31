@@ -85,6 +85,10 @@ public class PdfCharacteristics
     public long? ScoreLength { get; set; } = null;
     public bool ScoreSpaces { get; set; } = true;
 
+    // The link the text is in: one per link flow object, to another document (sgml-document-address) whose
+    // system identifier is the URI it opens; null for none
+    public PdfLink? Link { get; set; } = null;
+
     // The page model (12.6.4, 12.6.5): the models of a page-sequence and of a column-set-sequence
     public PageModel[] InitialPageModels { get; set; } = System.Array.Empty<PageModel>();
     public PageModel[] RepeatPageModels { get; set; } = System.Array.Empty<PageModel>();
