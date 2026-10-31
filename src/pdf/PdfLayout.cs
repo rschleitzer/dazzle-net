@@ -412,6 +412,12 @@ internal sealed class PdfLayout
             OpenPage();
         if (!a.NoBreak && !a.AtTop && a.Y + PendingSpace(a) + height > a.Bottom + 0.001)
             NewPage();
+        // the next column of a set that begins below the top of the body begins as low as the one
+        // before it: what did not fit there does not fit here either, and on it goes to the top of
+        // the next page
+        while (!a.NoBreak && columns_ is { } set && set.Top > a.Top + 0.001
+               && a.Y + PendingSpace(a) + height > a.Bottom + 0.001)
+            NewPage();
         a.Y += PendingSpace(a);
         a.PendingConditional = a.PendingFixed = 0;
         if (keep)
